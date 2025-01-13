@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,18 +16,19 @@
 #include "parameters.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
 #include <cmath>
+#include <cstring>
 #include <iostream>
 
 const std::string ELEMENTS[NUM_ELEMENTS] = {
-  "H",  "He", "Li", "Be", "B",  "C",  "N",  "O",  "F",  "Ne", "Na", "Mg", "Al", "Si", "P",
-  "S",  "Cl", "Ar", "K",  "Ca", "Sc", "Ti", "V",  "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
-  "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y",  "Zr", "Nb", "Mo", "Tc", "Ru", "Rh",
-  "Pd", "Ag", "Cd", "In", "Sn", "Sb", "Te", "I",  "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd",
-  "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Hf", "Ta", "W",  "Re",
-  "Os", "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th",
-  "Pa", "U",  "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr"};
+  "H",  "He", "Li", "Be", "B",  "C",  "N",  "O",  "F",  "Ne", "Na", "Mg", "Al", "Si", "P",  "S",
+  "Cl", "Ar", "K",  "Ca", "Sc", "Ti", "V",  "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge",
+  "As", "Se", "Br", "Kr", "Rb", "Sr", "Y",  "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
+  "In", "Sn", "Sb", "Te", "I",  "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd",
+  "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Hf", "Ta", "W",  "Re", "Os", "Ir", "Pt", "Au", "Hg",
+  "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th", "Pa", "U",  "Np", "Pu"};
 
 Parameters::Parameters()
 {
@@ -71,14 +72,16 @@ void Parameters::set_default_parameters()
   is_type_weight_set = false;
   is_zbl_set = false;
   is_force_delta_set = false;
+  is_use_typewise_cutoff_set = false;
+  is_use_typewise_cutoff_zbl_set = false;
 
   train_mode = 0;              // potential
   prediction = 0;              // not prediction mode
   version = 4;                 // NEP4 is the best
   rc_radial = 8.0f;            // large enough for vdw/coulomb
   rc_angular = 4.0f;           // large enough in most cases
-  basis_size_radial = 12;      // large enough in most cases
-  basis_size_angular = 12;     // large enough in most cases
+  basis_size_radial = 8;       // large enough in most cases
+  basis_size_angular = 8;      // large enough in most cases
   n_max_radial = 4;            // a relatively small value to achieve high speed
   n_max_angular = 4;           // a relatively small value to achieve high speed
   L_max = 4;                   // the only supported value
@@ -91,10 +94,20 @@ void Parameters::set_default_parameters()
   lambda_shear = 1.0f;         // do not weight shear virial more by default
   force_delta = 0.0f;          // no modification of force loss
   batch_size = 1000;           // large enough in most cases
+  use_full_batch = 0;          // default is not to enable effective full-batch
   population_size = 50;        // almost optimal
   maximum_generation = 100000; // a good starting point
+  initial_para = 1.0f;
+  sigma0 = 0.1f;
+  use_typewise_cutoff = false;
+  use_typewise_cutoff_zbl = false;
+  typewise_cutoff_radial_factor = -1.0f;
+  typewise_cutoff_angular_factor = -1.0f;
+  typewise_cutoff_zbl_factor = -1.0f;
+  output_descriptor = false;
+
   type_weight_cpu.resize(NUM_ELEMENTS);
-  zbl_para.resize(440); // Maximum number of zbl parameters
+  zbl_para.resize(550); // Maximum number of zbl parameters
   for (int n = 0; n < NUM_ELEMENTS; ++n) {
     type_weight_cpu[n] = 1.0f; // uniform weight by default
   }
@@ -135,7 +148,7 @@ void Parameters::read_zbl_in()
     flexible_zbl = false;
   } else {
     flexible_zbl = true;
-    for (int n = 0; n < (num_types * (num_types + 1) / 2) * 8; ++n) {
+    for (int n = 0; n < (num_types * (num_types + 1) / 2) * 10; ++n) {
       int count = fscanf(fid_zbl, "%f", &zbl_para[n]);
       PRINT_SCANF_ERROR(count, 1, "Reading error for zbl.in.");
     }
@@ -145,8 +158,11 @@ void Parameters::read_zbl_in()
 
 void Parameters::calculate_parameters()
 {
+  if (version == 5 && train_mode != 0) {
+    PRINT_INPUT_ERROR("Can only use NEP5 for potential model.");
+  }
 
-  if (train_mode != 0) {
+  if (train_mode != 0 && train_mode != 3) {
     // take virial as dipole or polarizability
     lambda_e = lambda_f = 0.0f;
     enable_zbl = false;
@@ -156,35 +172,60 @@ void Parameters::calculate_parameters()
   }
   dim_radial = n_max_radial + 1;             // 2-body descriptors q^i_n
   dim_angular = (n_max_angular + 1) * L_max; // 3-body descriptors q^i_nl
-  if (version >= 3 && L_max_4body == 2) {    // 4-body descriptors q^i_n222
+  if (L_max_4body == 2) {                    // 4-body descriptors q^i_n222
     dim_angular += n_max_angular + 1;
   }
-  if (version >= 3 && L_max_5body == 1) { // 5-body descriptors q^i_n1111
+  if (L_max_5body == 1) { // 5-body descriptors q^i_n1111
     dim_angular += n_max_angular + 1;
   }
   dim = dim_radial + dim_angular;
-  q_scaler_cpu.resize(dim, 1.0e10f);
-
-  number_of_variables_ann = (dim + 2) * num_neurons1 * (version == 4 ? num_types : 1) + 1;
-
-  if (version == 2) {
-    number_of_variables_descriptor =
-      (num_types == 1) ? 0 : num_types * num_types * (n_max_radial + n_max_angular + 2);
-  } else {
-    number_of_variables_descriptor =
-      num_types * num_types *
-      (dim_radial * (basis_size_radial + 1) + (n_max_angular + 1) * (basis_size_angular + 1));
+  if (train_mode == 3) {
+    dim += 1; // concatenate temeprature with descriptors
   }
+  q_scaler_cpu.resize(dim, 1.0e10f);
+#ifdef USE_FIXED_SCALER
+  for (int n = 0; n < q_scaler_cpu.size(); ++n) {
+    q_scaler_cpu[n] = 0.01f;
+  }
+#endif
+
+  if (version == 3) {
+    number_of_variables_ann = (dim + 2) * num_neurons1 + 1;
+  } else if (version == 4) {
+    number_of_variables_ann = (dim + 2) * num_neurons1 * num_types + 1;
+  } else if (version == 5) {
+    number_of_variables_ann = ((dim + 2) * num_neurons1 + 1) * num_types + 1;
+  }
+
+  number_of_variables_descriptor =
+    num_types * num_types *
+    (dim_radial * (basis_size_radial + 1) + (n_max_angular + 1) * (basis_size_angular + 1));
 
   number_of_variables = number_of_variables_ann + number_of_variables_descriptor;
   if (train_mode == 2) {
     number_of_variables += number_of_variables_ann;
   }
 
+  if (version != 3) {
+    if (!is_lambda_1_set) {
+      lambda_1 = sqrt(number_of_variables * 1.0e-6f / num_types);
+    }
+    if (!is_lambda_2_set) {
+      lambda_2 = sqrt(number_of_variables * 1.0e-6f / num_types);
+    }
+  } else {
+    if (!is_lambda_1_set) {
+      lambda_1 = sqrt(number_of_variables * 1.0e-6f);
+    }
+    if (!is_lambda_2_set) {
+      lambda_2 = sqrt(number_of_variables * 1.0e-6f);
+    }
+  }
+
   int deviceCount;
-  CHECK(cudaGetDeviceCount(&deviceCount));
+  CHECK(gpuGetDeviceCount(&deviceCount));
   for (int device_id = 0; device_id < deviceCount; device_id++) {
-    CHECK(cudaSetDevice(device_id));
+    CHECK(gpuSetDevice(device_id));
     q_scaler_gpu[device_id].resize(dim);
     q_scaler_gpu[device_id].copy_from_host(q_scaler_cpu.data());
   }
@@ -203,11 +244,13 @@ void Parameters::report_inputs()
     train_mode_name = "dipole";
   } else if (train_mode == 2) {
     train_mode_name = "polarizability";
+  } else if (train_mode == 3) {
+    train_mode_name = "temperature-dependent free energy";
   }
   if (is_train_mode_set) {
-    printf("    (input)   train_mode = %s.\n", train_mode_name.c_str());
+    printf("    (input)   model_type = %s.\n", train_mode_name.c_str());
   } else {
-    printf("    (default) train_mode = %s.\n", train_mode_name.c_str());
+    printf("    (default) model_type = %s.\n", train_mode_name.c_str());
   }
 
   std::string calculation_mode_name = "train";
@@ -229,14 +272,20 @@ void Parameters::report_inputs()
   if (is_type_weight_set) {
     for (int n = 0; n < num_types; ++n) {
       printf(
-        "        (input)   type %d (%s with Z = %d) has force weight of %g.\n", n,
-        elements[n].c_str(), atomic_numbers[n], type_weight_cpu[n]);
+        "        (input)   type %d (%s with Z = %d) has force weight of %g.\n",
+        n,
+        elements[n].c_str(),
+        atomic_numbers[n],
+        type_weight_cpu[n]);
     }
   } else {
     for (int n = 0; n < num_types; ++n) {
       printf(
-        "        (default) type %d (%s with Z = %d) has force weight of %g.\n", n,
-        elements[n].c_str(), atomic_numbers[n], type_weight_cpu[n]);
+        "        (default) type %d (%s with Z = %d) has force weight of %g.\n",
+        n,
+        elements[n].c_str(),
+        atomic_numbers[n],
+        type_weight_cpu[n]);
     }
   }
 
@@ -247,7 +296,8 @@ void Parameters::report_inputs()
       printf(
         "    (input)   will add the universal ZBL potential with outer cutoff %g A and inner "
         "cutoff %g A.\n",
-        zbl_rc_outer, zbl_rc_inner);
+        zbl_rc_outer,
+        zbl_rc_inner);
     }
   } else {
     printf("    (default) will not add the ZBL potential.\n");
@@ -259,6 +309,23 @@ void Parameters::report_inputs()
   } else {
     printf("    (default) radial cutoff = %g A.\n", rc_radial);
     printf("    (default) angular cutoff = %g A.\n", rc_angular);
+  }
+
+  if (is_use_typewise_cutoff_set) {
+    printf("    (input)   use %s cutoff for NEP.\n", use_typewise_cutoff ? "typewise" : "global");
+    printf("              radial factor = %g.\n", typewise_cutoff_radial_factor);
+    printf("              angular factor = %g.\n", typewise_cutoff_angular_factor);
+  } else {
+    printf("    (default) use %s cutoff for NEP.\n", use_typewise_cutoff ? "typewise" : "global");
+  }
+
+  if (is_use_typewise_cutoff_zbl_set) {
+    printf(
+      "    (input)   use %s cutoff for ZBL.\n", use_typewise_cutoff_zbl ? "typewise" : "global");
+    printf("              factor = %g.\n", typewise_cutoff_zbl_factor);
+  } else {
+    printf(
+      "    (default) use %s cutoff for ZBL.\n", use_typewise_cutoff_zbl ? "typewise" : "global");
   }
 
   if (is_n_max_set) {
@@ -337,6 +404,9 @@ void Parameters::report_inputs()
 
   if (is_batch_set) {
     printf("    (input)   batch size = %d.\n", batch_size);
+    if (use_full_batch) {
+      printf("        enable effective full-batch.\n");
+    }
   } else {
     printf("    (default) batch size = %d.\n", batch_size);
   }
@@ -370,11 +440,11 @@ void Parameters::report_inputs()
 void Parameters::parse_one_keyword(std::vector<std::string>& tokens)
 {
   int num_param = tokens.size();
-  const char* param[20]; // never use more than 19 parameters
+  const char* param[105]; // never use more than 104 parameters
   for (int n = 0; n < num_param; ++n) {
     param[n] = tokens[n].c_str();
   }
-  if (strcmp(param[0], "mode") == 0) {
+  if (strcmp(param[0], "model_type") == 0 || strcmp(param[0], "mode") == 0) {
     parse_mode(param, num_param);
   } else if (strcmp(param[0], "prediction") == 0) {
     parse_prediction(param, num_param);
@@ -416,6 +486,16 @@ void Parameters::parse_one_keyword(std::vector<std::string>& tokens)
     parse_force_delta(param, num_param);
   } else if (strcmp(param[0], "zbl") == 0) {
     parse_zbl(param, num_param);
+  } else if (strcmp(param[0], "initial_para") == 0) {
+    parse_initial_para(param, num_param);
+  } else if (strcmp(param[0], "sigma0") == 0) {
+    parse_sigma0(param, num_param);
+  } else if (strcmp(param[0], "use_typewise_cutoff") == 0) {
+    parse_use_typewise_cutoff(param, num_param);
+  } else if (strcmp(param[0], "use_typewise_cutoff_zbl") == 0) {
+    parse_use_typewise_cutoff_zbl(param, num_param);
+  } else if (strcmp(param[0], "output_descriptor") == 0) {
+    parse_output_descriptor(param, num_param);
   } else {
     PRINT_KEYWORD_ERROR(param[0]);
   }
@@ -426,13 +506,13 @@ void Parameters::parse_mode(const char** param, int num_param)
   is_train_mode_set = true;
 
   if (num_param != 2) {
-    PRINT_INPUT_ERROR("mode should have 1 parameter.\n");
+    PRINT_INPUT_ERROR("model_type should have 1 parameter.\n");
   }
   if (!is_valid_int(param[1], &train_mode)) {
     PRINT_INPUT_ERROR("mode should be an integer.\n");
   }
-  if (train_mode != 0 && train_mode != 1 && train_mode != 2) {
-    PRINT_INPUT_ERROR("mode should = 0 or 1 or 2.");
+  if (train_mode != 0 && train_mode != 1 && train_mode != 2 && train_mode != 3) {
+    PRINT_INPUT_ERROR("model_type should = 0 or 1 or 2 or 3.");
   }
 }
 
@@ -461,8 +541,8 @@ void Parameters::parse_version(const char** param, int num_param)
   if (!is_valid_int(param[1], &version)) {
     PRINT_INPUT_ERROR("version should be an integer.\n");
   }
-  if (version < 2 || version > 4) {
-    PRINT_INPUT_ERROR("version should = 2 or 3 or 4.");
+  if (version < 3 || version > 5) {
+    PRINT_INPUT_ERROR("version should = 3 or 4 or 5.");
   }
 }
 
@@ -651,8 +731,11 @@ void Parameters::parse_l_max(const char** param, int num_param)
   if (!is_valid_int(param[1], &L_max)) {
     PRINT_INPUT_ERROR("l_max for 3-body descriptors should be an integer.\n");
   }
-  if (L_max != 4) {
-    PRINT_INPUT_ERROR("l_max for 3-body descriptors should = 4.");
+  if (L_max < 0) {
+    PRINT_INPUT_ERROR("l_max for 3-body descriptors should >= 0.");
+  }
+  if (L_max > 8) {
+    PRINT_INPUT_ERROR("l_max for 3-body descriptors should <= 8.");
   }
 
   if (num_param >= 3) {
@@ -661,6 +744,9 @@ void Parameters::parse_l_max(const char** param, int num_param)
     }
     if (L_max_4body != 0 && L_max_4body != 2) {
       PRINT_INPUT_ERROR("l_max for 4-body descriptors should = 0 or 2.");
+    }
+    if (L_max < L_max_4body) {
+      PRINT_INPUT_ERROR("l_max_4body should <= l_max_3body.");
     }
   }
 
@@ -684,6 +770,7 @@ void Parameters::parse_neuron(const char** param, int num_param)
   if (num_param != 2) {
     PRINT_INPUT_ERROR("neuron should have 1 parameter.\n");
   }
+
   if (!is_valid_int(param[1], &num_neurons1)) {
     PRINT_INPUT_ERROR("number of neurons should be an integer.\n");
   }
@@ -812,14 +899,23 @@ void Parameters::parse_batch(const char** param, int num_param)
 {
   is_batch_set = true;
 
-  if (num_param != 2) {
-    PRINT_INPUT_ERROR("batch should have 1 parameter.\n");
+  if (num_param != 2 && num_param != 3) {
+    PRINT_INPUT_ERROR("batch should have 1 or 2 parameters.\n");
   }
   if (!is_valid_int(param[1], &batch_size)) {
     PRINT_INPUT_ERROR("batch size should be an integer.\n");
   }
   if (batch_size < 1) {
     PRINT_INPUT_ERROR("batch size should >= 1.");
+  }
+
+  if (num_param == 3) {
+    if (!is_valid_int(param[2], &use_full_batch)) {
+      PRINT_INPUT_ERROR("use_full_batch should be an integer.\n");
+    }
+    if (use_full_batch != 0 && use_full_batch != 1) {
+      PRINT_INPUT_ERROR("use_full_batch should = 0 or 1.");
+    }
   }
 }
 
@@ -840,7 +936,7 @@ void Parameters::parse_population(const char** param, int num_param)
   }
 
   int deviceCount;
-  CHECK(cudaGetDeviceCount(&deviceCount));
+  CHECK(gpuGetDeviceCount(&deviceCount));
   int fully_used_device = population_size % deviceCount;
   int population_should_increase;
   if (fully_used_device != 0) {
@@ -870,5 +966,109 @@ void Parameters::parse_generation(const char** param, int num_param)
     PRINT_INPUT_ERROR("maximum number of generations should >= 0.");
   } else if (maximum_generation > 10000000) {
     PRINT_INPUT_ERROR("maximum number of generations should <= 10000000.");
+  }
+}
+
+void Parameters::parse_initial_para(const char** param, int num_param)
+{
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("initial_para should have 1 parameter.\n");
+  }
+
+  double initial_para_tmp = 0.0;
+  if (!is_valid_real(param[1], &initial_para_tmp)) {
+    PRINT_INPUT_ERROR("initial_para should be a number.\n");
+  }
+  initial_para = initial_para_tmp;
+
+  if (initial_para < 0.1f || initial_para > 1.0f) {
+    PRINT_INPUT_ERROR("initial_para should be within [0.1, 1].");
+  }
+}
+
+void Parameters::parse_sigma0(const char** param, int num_param)
+{
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("sigma0 should have 1 parameter.\n");
+  }
+
+  double sigma0_tmp = 0.0;
+  if (!is_valid_real(param[1], &sigma0_tmp)) {
+    PRINT_INPUT_ERROR("sigma0 should be a number.\n");
+  }
+  sigma0 = sigma0_tmp;
+
+  if (sigma0 < 0.01f || sigma0 > 0.1f) {
+    PRINT_INPUT_ERROR("sigma0 should be within [0.01, 0.1].");
+  }
+}
+
+void Parameters::parse_use_typewise_cutoff(const char** param, int num_param)
+{
+  if (num_param != 1 && num_param != 3) {
+    PRINT_INPUT_ERROR("use_typewise_cutoff should have 0 or 2 parameters.\n");
+  }
+  use_typewise_cutoff = true;
+  is_use_typewise_cutoff_set = true;
+  typewise_cutoff_radial_factor = 2.5f;
+  typewise_cutoff_angular_factor = 2.0f;
+
+  if (num_param == 3) {
+    double typewise_cutoff_radial_factor_temp = 0.0;
+    if (!is_valid_real(param[1], &typewise_cutoff_radial_factor_temp)) {
+      PRINT_INPUT_ERROR("typewise_cutoff_radial_factor should be a number.\n");
+    }
+    typewise_cutoff_radial_factor = typewise_cutoff_radial_factor_temp;
+
+    double typewise_cutoff_angular_factor_temp = 0.0;
+    if (!is_valid_real(param[2], &typewise_cutoff_angular_factor_temp)) {
+      PRINT_INPUT_ERROR("typewise_cutoff_angular_factor should be a number.\n");
+    }
+    typewise_cutoff_angular_factor = typewise_cutoff_angular_factor_temp;
+  }
+
+  if (typewise_cutoff_angular_factor < 1.5f) {
+    PRINT_INPUT_ERROR("typewise_cutoff_angular_factor must >= 1.5.\n");
+  }
+
+  if (typewise_cutoff_radial_factor < typewise_cutoff_angular_factor) {
+    PRINT_INPUT_ERROR("typewise_cutoff_radial_factor must >= typewise_cutoff_angular_factor.\n");
+  }
+}
+
+void Parameters::parse_use_typewise_cutoff_zbl(const char** param, int num_param)
+{
+  if (num_param != 1 && num_param != 2) {
+    PRINT_INPUT_ERROR("use_typewise_cutoff_zbl should have 0 or 1 parameter.\n");
+  }
+  use_typewise_cutoff_zbl = true;
+  is_use_typewise_cutoff_zbl_set = true;
+  typewise_cutoff_zbl_factor = 0.65f;
+
+  if (num_param == 2) {
+    double typewise_cutoff_zbl_factor_temp = 0.0;
+    if (!is_valid_real(param[1], &typewise_cutoff_zbl_factor_temp)) {
+      PRINT_INPUT_ERROR("typewise_cutoff_zbl_factor should be a number.\n");
+    }
+    typewise_cutoff_zbl_factor = typewise_cutoff_zbl_factor_temp;
+  }
+
+  if (typewise_cutoff_zbl_factor < 0.5f) {
+    PRINT_INPUT_ERROR("typewise_cutoff_zbl_factor must >= 0.5.\n");
+  }
+}
+
+void Parameters::parse_output_descriptor(const char** param, int num_param)
+{
+  output_descriptor = true;
+
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("output_descriptor should have 1 parameter.\n");
+  }
+  if (!is_valid_int(param[1], &output_descriptor)) {
+    PRINT_INPUT_ERROR("output_descriptor should be an integer.\n");
+  }
+  if (output_descriptor < 0 || output_descriptor > 2) {
+    PRINT_INPUT_ERROR("output_descriptor should >= 0 and <= 2.");
   }
 }

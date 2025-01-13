@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 class Ensemble_NPT_SCR : public Ensemble
 {
 public:
-  Ensemble_NPT_SCR(int, int, double, double, double*, int, double*, int, int, int, double*);
+  Ensemble_NPT_SCR(int, double, double, double*, int, double*, int, int, int, double*);
   virtual ~Ensemble_NPT_SCR(void);
 
   virtual void compute1(

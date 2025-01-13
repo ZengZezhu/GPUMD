@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,8 +25,10 @@ with many-body potentials, Phys. Rev. B 99, 064308 (2019).
 #include "hnemdec_kappa.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
 #include <vector>
+#include <cstring>
 
 #define NUM_OF_HEAT_COMPONENTS 3
 #define FILE_NAME_LENGTH 200
@@ -98,7 +100,7 @@ static __global__ void gpu_sum_heat_and_diffusion(
     }
     __syncthreads();
 
-#pragma unroll
+
     for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
       if (tid < offset) {
         s_data[tid] += s_data[tid + offset];
@@ -122,7 +124,7 @@ static __global__ void gpu_sum_heat_and_diffusion(
     }
     __syncthreads();
 
-#pragma unroll
+
     for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
       if (tid < offset) {
         s_data[tid] += s_data[tid + offset];
@@ -158,9 +160,15 @@ void HNEMDEC::process(
   compute_heat(mass, potential, virial_per_atom, velocity_per_atom, heat_per_atom);
 
   gpu_sum_heat_and_diffusion<<<NUM_OF_HEAT_COMPONENTS + NUM_OF_DIFFUSION_COMPONENTS, 1024>>>(
-    N, step, type.data(), mass_type.data(), velocity_per_atom.data(), heat_per_atom.data(),
-    heat_all.data(), diffusion_all.data());
-  CUDA_CHECK_KERNEL
+    N,
+    step,
+    type.data(),
+    mass_type.data(),
+    velocity_per_atom.data(),
+    heat_per_atom.data(),
+    heat_all.data(),
+    diffusion_all.data());
+  GPU_CHECK_KERNEL
 
   if (output_flag) {
     const int heat_num = NUM_OF_HEAT_COMPONENTS * output_interval;

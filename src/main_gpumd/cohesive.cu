@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,7 +25,9 @@ Compute the cohesive energy curve with different deformations.
 #include "model/group.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 
 static void __global__ deform_position(
   const int N,
@@ -51,32 +53,27 @@ void Cohesive::deform_box(
   new_box.pbc_x = old_box.pbc_x;
   new_box.pbc_y = old_box.pbc_y;
   new_box.pbc_z = old_box.pbc_z;
-  new_box.triclinic = old_box.triclinic;
 
-  if (new_box.triclinic == 0) {
-    new_box.cpu_h[0] = cpu_d.data[0] * old_box.cpu_h[0];
-    new_box.cpu_h[1] = cpu_d.data[4] * old_box.cpu_h[1];
-    new_box.cpu_h[2] = cpu_d.data[8] * old_box.cpu_h[2];
-    for (int k = 0; k < 3; ++k) {
-      new_box.cpu_h[k + 3] = new_box.cpu_h[k] * 0.5;
-    }
-  } else {
-    for (int r = 0; r < 3; ++r) {
-      for (int c = 0; c < 3; ++c) {
-        double tmp = 0.0f;
-        for (int k = 0; k < 3; ++k) {
-          tmp += cpu_d.data[r * 3 + k] * old_box.cpu_h[k * 3 + c];
-        }
-        new_box.cpu_h[r * 3 + c] = tmp;
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      double tmp = 0.0f;
+      for (int k = 0; k < 3; ++k) {
+        tmp += cpu_d.data[r * 3 + k] * old_box.cpu_h[k * 3 + c];
       }
+      new_box.cpu_h[r * 3 + c] = tmp;
     }
-    new_box.get_inverse();
   }
+  new_box.get_inverse();
 
   deform_position<<<(N - 1) / 128 + 1, 128>>>(
-    N, cpu_d, position_per_atom.data(), position_per_atom.data() + N,
-    position_per_atom.data() + N * 2, new_position_per_atom.data(),
-    new_position_per_atom.data() + N, new_position_per_atom.data() + N * 2);
+    N,
+    cpu_d,
+    position_per_atom.data(),
+    position_per_atom.data() + N,
+    position_per_atom.data() + N * 2,
+    new_position_per_atom.data(),
+    new_position_per_atom.data() + N,
+    new_position_per_atom.data() + N * 2);
 }
 
 void Cohesive::parse(const char** param, int num_param, int type)
@@ -235,9 +232,6 @@ void Cohesive::compute(
   GPU_Vector<double>& virial_per_atom,
   Force& force)
 {
-  if (deformation_type == 1 && box.triclinic == 0) {
-    PRINT_INPUT_ERROR("Please use triclinic box in xyz.in to compute elastic constants.");
-  }
   const int num_atoms = potential_per_atom.size();
   allocate_memory(num_atoms);
   compute_D();
@@ -248,7 +242,13 @@ void Cohesive::compute(
 
     Minimizer_SD minimizer(num_atoms, 1000, 1.0e-5);
     minimizer.compute(
-      force, new_box, new_position_per_atom, type, group, potential_per_atom, force_per_atom,
+      force,
+      new_box,
+      new_position_per_atom,
+      type,
+      group,
+      potential_per_atom,
+      force_per_atom,
       virial_per_atom);
 
     potential_per_atom.copy_to_host(cpu_potential_per_atom.data());

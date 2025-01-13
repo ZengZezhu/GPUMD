@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,18 +21,37 @@ The driver class for the various integrators.
 #include "ensemble_bdp.cuh"
 #include "ensemble_ber.cuh"
 #include "ensemble_lan.cuh"
+#include "ensemble_msst.cuh"
+#include "ensemble_mttk.cuh"
 #include "ensemble_nhc.cuh"
+#include "ensemble_nphug.cuh"
 #include "ensemble_npt_scr.cuh"
 #include "ensemble_nve.cuh"
 #include "ensemble_pimd.cuh"
+#include "ensemble_ti.cuh"
+#include "ensemble_ti_as.cuh"
+#include "ensemble_ti_rs.cuh"
+#include "ensemble_ti_spring.cuh"
+#include "ensemble_wall_harmonic.cuh"
+#include "ensemble_wall_mirror.cuh"
+#include "ensemble_wall_piston.cuh"
 #include "integrate.cuh"
 #include "model/atom.cuh"
 #include "utilities/common.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 
 void Integrate::initialize(
-  const int number_of_atoms, const double time_step, const std::vector<Group>& group, Atom& atom)
+  double time_step,
+  Atom& atom,
+  Box& box,
+  std::vector<Group>& group,
+  GPU_Vector<double>& thermo,
+  int& total_steps)
 {
+  this->total_steps = total_steps;
+  int number_of_atoms = atom.number_of_atoms;
   if (move_group >= 0) {
     if (fixed_group < 0) {
       PRINT_INPUT_ERROR("It is not allowed to have moving group but no fixed group.");
@@ -49,65 +68,141 @@ void Integrate::initialize(
   // determine the integrator
   switch (type) {
     case 0: // NVE
-      ensemble.reset(new Ensemble_NVE(type, fixed_group));
+      ensemble.reset(new Ensemble_NVE(type));
       break;
     case 1: // NVT-Berendsen
-      ensemble.reset(new Ensemble_BER(
-        type, fixed_group, move_group, move_velocity, temperature, temperature_coupling));
+      ensemble.reset(
+        new Ensemble_BER(type, move_group, move_velocity, temperature, temperature_coupling));
       break;
     case 2: // NVT-NHC
       ensemble.reset(new Ensemble_NHC(
-        type, fixed_group, move_group, move_velocity, number_of_atoms, temperature,
-        temperature_coupling, time_step));
+        type,
+        move_group,
+        move_velocity,
+        number_of_atoms,
+        temperature,
+        temperature_coupling,
+        time_step));
       break;
     case 3: // NVT-Langevin
-      ensemble.reset(
-        new Ensemble_LAN(type, fixed_group, number_of_atoms, temperature, temperature_coupling));
+      ensemble.reset(new Ensemble_LAN(type, number_of_atoms, temperature, temperature_coupling));
       break;
     case 4: // NVT-BDP
-      ensemble.reset(new Ensemble_BDP(
-        type, fixed_group, move_group, move_velocity, temperature, temperature_coupling));
+      ensemble.reset(
+        new Ensemble_BDP(type, move_group, move_velocity, temperature, temperature_coupling));
       break;
     case 5: // NVT-BAOAB_Langevin
-      ensemble.reset(
-        new Ensemble_BAO(type, fixed_group, number_of_atoms, temperature, temperature_coupling));
+      ensemble.reset(new Ensemble_BAO(type, number_of_atoms, temperature, temperature_coupling));
       break;
     case 11: // NPT-Berendsen
       ensemble.reset(new Ensemble_BER(
-        type, fixed_group, temperature, temperature_coupling, target_pressure,
-        num_target_pressure_components, pressure_coupling, deform_x, deform_y, deform_z,
+        type,
+        temperature,
+        temperature_coupling,
+        target_pressure,
+        num_target_pressure_components,
+        pressure_coupling,
+        deform_x,
+        deform_y,
+        deform_z,
         deform_rate));
       break;
     case 12: // NPT-SCR
       ensemble.reset(new Ensemble_NPT_SCR(
-        type, fixed_group, temperature, temperature_coupling, target_pressure,
-        num_target_pressure_components, pressure_coupling, deform_x, deform_y, deform_z,
+        type,
+        temperature,
+        temperature_coupling,
+        target_pressure,
+        num_target_pressure_components,
+        pressure_coupling,
+        deform_x,
+        deform_y,
+        deform_z,
         deform_rate));
+      break;
+    case -1: // msst
+      break;
+    case -2: // ti_spring
+      break;
+    case -3: // mttk
+      break;
+    case -4: // piston
+      break;
+    case -5: // nphug
+      break;
+    case -6: // ti
+      break;
+    case -7: // mirror
+      break;
+    case -8: // ti_rs
+      break;
+    case -9: // ti_as
+      break;
+    case -10:
       break;
     case 21: // heat-NHC
       ensemble.reset(new Ensemble_NHC(
-        type, fixed_group, source, sink, group[0].cpu_size[source], group[0].cpu_size[sink],
-        temperature, temperature_coupling, delta_temperature, time_step));
+        type,
+        source,
+        sink,
+        group[0].cpu_size[source],
+        group[0].cpu_size[sink],
+        temperature,
+        temperature_coupling,
+        delta_temperature,
+        time_step));
       break;
     case 22: // heat-Langevin
       ensemble.reset(new Ensemble_LAN(
-        type, fixed_group, source, sink, group[0].cpu_size[source], group[0].cpu_size[sink],
-        group[0].cpu_size_sum[source], group[0].cpu_size_sum[sink], temperature,
-        temperature_coupling, delta_temperature));
+        type,
+        source,
+        sink,
+        group[0].cpu_size[source],
+        group[0].cpu_size[sink],
+        group[0].cpu_size_sum[source],
+        group[0].cpu_size_sum[sink],
+        temperature,
+        temperature_coupling,
+        delta_temperature));
       break;
     case 23: // heat-BDP
-      ensemble.reset(new Ensemble_BDP(
-        type, fixed_group, source, sink, temperature, temperature_coupling, delta_temperature));
+      ensemble.reset(
+        new Ensemble_BDP(type, source, sink, temperature, temperature_coupling, delta_temperature));
       break;
-    case 31: // NVT-PIMD
-      ensemble.reset(new Ensemble_PIMD(
-        number_of_atoms, number_of_beads, number_of_steps_pimd, temperature, temperature_coupling,
-        atom));
+    case 31: // RPMD
+      ensemble.reset(new Ensemble_PIMD(number_of_atoms, number_of_beads, false, atom));
+      break;
+    case 32: // TRPMD
+      ensemble.reset(new Ensemble_PIMD(number_of_atoms, number_of_beads, true, atom));
+      break;
+    case 33: // PIMD
+      if (num_target_pressure_components == 0) {
+        ensemble.reset(
+          new Ensemble_PIMD(number_of_atoms, number_of_beads, temperature_coupling, atom));
+      } else {
+        ensemble.reset(new Ensemble_PIMD(
+          number_of_atoms,
+          number_of_beads,
+          temperature_coupling,
+          num_target_pressure_components,
+          target_pressure,
+          pressure_coupling,
+          atom));
+      }
       break;
     default:
       printf("Illegal integrator!\n");
       break;
   }
+
+  ensemble->atom = &atom;
+  ensemble->box = &box;
+  ensemble->group = &group;
+  ensemble->time_step = time_step;
+  ensemble->current_step = &this->current_step;
+  ensemble->total_steps = &this->total_steps;
+  ensemble->thermo = &thermo;
+  ensemble->fixed_group = fixed_group;
 }
 
 void Integrate::finalize()
@@ -164,29 +259,38 @@ void Integrate::compute1(
   Atom& atom,
   GPU_Vector<double>& thermo)
 {
-  if (type == 0) {
+  if (type == 0 || type == 31 || type == 32) {
     ensemble->temperature = temperature2;
-  } else if (type <= 20) {
+  } else if (type > 0 && (type <= 20 || type == 33)) {
     ensemble->temperature =
       temperature1 + (temperature2 - temperature1) * step_over_number_of_steps;
   }
 
   const int num_atoms = atom.position_per_atom.size() / 3;
   gpu_copy_position<<<(num_atoms - 1) / 128 + 1, 128>>>(
-    num_atoms, atom.position_per_atom.data(), atom.position_per_atom.data() + num_atoms,
-    atom.position_per_atom.data() + num_atoms * 2, atom.position_temp.data(),
-    atom.position_temp.data() + num_atoms, atom.position_temp.data() + num_atoms * 2);
-  CUDA_CHECK_KERNEL
+    num_atoms,
+    atom.position_per_atom.data(),
+    atom.position_per_atom.data() + num_atoms,
+    atom.position_per_atom.data() + num_atoms * 2,
+    atom.position_temp.data(),
+    atom.position_temp.data() + num_atoms,
+    atom.position_temp.data() + num_atoms * 2);
+  GPU_CHECK_KERNEL
 
   ensemble->compute1(time_step, group, box, atom, thermo);
 
   gpu_update_unwrapped_position<<<(num_atoms - 1) / 128 + 1, 128>>>(
-    num_atoms, atom.position_per_atom.data(), atom.position_per_atom.data() + num_atoms,
-    atom.position_per_atom.data() + num_atoms * 2, atom.position_temp.data(),
-    atom.position_temp.data() + num_atoms, atom.position_temp.data() + num_atoms * 2,
-    atom.unwrapped_position.data(), atom.unwrapped_position.data() + num_atoms,
+    num_atoms,
+    atom.position_per_atom.data(),
+    atom.position_per_atom.data() + num_atoms,
+    atom.position_per_atom.data() + num_atoms * 2,
+    atom.position_temp.data(),
+    atom.position_temp.data() + num_atoms,
+    atom.position_temp.data() + num_atoms * 2,
+    atom.unwrapped_position.data(),
+    atom.unwrapped_position.data() + num_atoms,
     atom.unwrapped_position.data() + num_atoms * 2);
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
 }
 
 void Integrate::compute2(
@@ -197,9 +301,9 @@ void Integrate::compute2(
   Atom& atom,
   GPU_Vector<double>& thermo)
 {
-  if (type == 0) {
+  if (type == 0 || type == 31 || type == 32) {
     ensemble->temperature = temperature2;
-  } else if (type <= 20) {
+  } else if (type > 0 && (type <= 20 || type == 33)) {
     ensemble->temperature =
       temperature1 + (temperature2 - temperature1) * step_over_number_of_steps;
   }
@@ -212,8 +316,15 @@ void Integrate::compute2(
 // 1-10:  NVT
 // 11-20: NPT
 // 21-30: heat (NEMD method for heat conductivity)
+// 31-40: PIMD related
 void Integrate::parse_ensemble(
-  Box& box, const char** param, int num_param, std::vector<Group>& group)
+  const char** param,
+  int num_param,
+  double time_step,
+  Atom& atom,
+  Box& box,
+  std::vector<Group>& group,
+  GPU_Vector<double>& thermo)
 {
   // 1. Determine the integration method
   if (strcmp(param[1], "nve") == 0) {
@@ -256,6 +367,14 @@ void Integrate::parse_ensemble(
     if (num_param != 18 && num_param != 12 && num_param != 8) {
       PRINT_INPUT_ERROR("ensemble npt_scr should have 6, 10, or 16 parameters.");
     }
+  } else if (
+    strcmp(param[1], "nvt_mttk") == 0 || strcmp(param[1], "npt_mttk") == 0 ||
+    strcmp(param[1], "nph_mttk") == 0) {
+    type = -3;
+    Ensemble_MTTK* ptr_temp = new Ensemble_MTTK(param, num_param);
+    ensemble.reset(ptr_temp);
+    temperature1 = ptr_temp->t_start;
+    temperature2 = ptr_temp->t_stop;
   } else if (strcmp(param[1], "heat_nhc") == 0) {
     type = 21;
     if (num_param != 7) {
@@ -271,17 +390,54 @@ void Integrate::parse_ensemble(
     if (num_param != 7) {
       PRINT_INPUT_ERROR("ensemble heat_bdp should have 5 parameters.");
     }
-  } else if (strcmp(param[1], "nvt_pimd") == 0) {
+  } else if (strcmp(param[1], "rpmd") == 0) {
     type = 31;
-    if (num_param != 6) {
-      PRINT_INPUT_ERROR("ensemble nvt_pimd should have 4 parameters.");
+    if (num_param != 3) {
+      PRINT_INPUT_ERROR("ensemble rpmd should have 1 parameter.");
     }
+  } else if (strcmp(param[1], "trpmd") == 0) {
+    type = 32;
+    if (num_param != 3) {
+      PRINT_INPUT_ERROR("ensemble trpmd should have 1 parameter.");
+    }
+  } else if (strcmp(param[1], "pimd") == 0) {
+    type = 33;
+    if (num_param != 6 && num_param != 9 && num_param != 13 && num_param != 19) {
+      PRINT_INPUT_ERROR("ensemble pimd should have 4 or 7 or 11 or 17 parameters.");
+    }
+  } else if (strcmp(param[1], "msst") == 0) {
+    type = -1;
+    ensemble.reset(new Ensemble_MSST(param, num_param));
+  } else if (strcmp(param[1], "ti_spring") == 0) {
+    type = -2;
+    ensemble.reset(new Ensemble_TI_Spring(param, num_param));
+  } else if (strcmp(param[1], "wall_piston") == 0) {
+    type = -4;
+    ensemble.reset(new Ensemble_wall_piston(param, num_param));
+  } else if (strcmp(param[1], "nphug") == 0) {
+    type = -5;
+    ensemble.reset(new Ensemble_NPHug(param, num_param));
+  } else if (strcmp(param[1], "ti") == 0) {
+    type = -6;
+    ensemble.reset(new Ensemble_TI(param, num_param));
+  } else if (strcmp(param[1], "wall_mirror") == 0) {
+    type = -7;
+    ensemble.reset(new Ensemble_wall_mirror(param, num_param));
+  } else if (strcmp(param[1], "ti_rs") == 0) {
+    type = -8;
+    ensemble.reset(new Ensemble_TI_RS(param, num_param));
+  } else if (strcmp(param[1], "ti_as") == 0) {
+    type = -9;
+    ensemble.reset(new Ensemble_TI_AS(param, num_param));
+  } else if (strcmp(param[1], "wall_harmonic") == 0) {
+    type = -10;
+    ensemble.reset(new Ensemble_wall_harmonic(param, num_param));
   } else {
     PRINT_INPUT_ERROR("Invalid ensemble type.");
   }
 
   // 2. Temperatures and temperature_coupling (NVT and NPT)
-  if (type >= 1 && type <= 20) {
+  if (type >= 1 && type < 20) {
     // initial temperature
     if (!is_valid_real(param[2], &temperature1)) {
       PRINT_INPUT_ERROR("Initial temperature should be a number.");
@@ -317,7 +473,7 @@ void Integrate::parse_ensemble(
   }
 
   // 3. Pressures and pressure_coupling (NPT)
-  if (type >= 11 && type <= 20) {
+  if (type >= 11 && type < 20) {
     // pressures:
     if (num_param == 12) {
       for (int i = 0; i < 3; i++) {
@@ -334,7 +490,8 @@ void Integrate::parse_ensemble(
         }
       }
       num_target_pressure_components = 3;
-      if (box.triclinic == 1) {
+      if (box.cpu_h[1] != 0 || box.cpu_h[2] != 0 || box.cpu_h[3] != 0 ||
+          box.cpu_h[5] != 0 || box.cpu_h[6] != 0 || box.cpu_h[7] != 0) {
         PRINT_INPUT_ERROR("Cannot use triclinic box with only 3 target pressure components.");
       }
     } else if (num_param == 8) { // isotropic
@@ -348,7 +505,8 @@ void Integrate::parse_ensemble(
         PRINT_INPUT_ERROR("elastic modulus should > 0.");
       }
       num_target_pressure_components = 1;
-      if (box.triclinic == 1) {
+      if (box.cpu_h[1] != 0 || box.cpu_h[2] != 0 || box.cpu_h[3] != 0 ||
+          box.cpu_h[5] != 0 || box.cpu_h[6] != 0 || box.cpu_h[7] != 0) {
         PRINT_INPUT_ERROR("Cannot use triclinic box with only 1 target pressure component.");
       }
       if (box.pbc_x == 0 || box.pbc_y == 0 || box.pbc_z == 0) {
@@ -370,9 +528,6 @@ void Integrate::parse_ensemble(
         }
       }
       num_target_pressure_components = 6;
-      if (box.triclinic == 0) {
-        PRINT_INPUT_ERROR("Must use triclinic box with 6 target pressure components.");
-      }
       if (box.pbc_x == 0 || box.pbc_y == 0 || box.pbc_z == 0) {
         PRINT_INPUT_ERROR(
           "Cannot use 6 pressure components with non-periodic boundary in any direction.");
@@ -451,34 +606,11 @@ void Integrate::parse_ensemble(
     }
   }
 
-  // 5. NVT-PIMD
-  if (type == 31) {
-    // temperature
-    if (!is_valid_real(param[2], &temperature)) {
-      PRINT_INPUT_ERROR("temperature should be a number.");
-    }
-    if (temperature <= 0.0) {
-      PRINT_INPUT_ERROR("temperature should > 0.");
-    }
+  // 5. PIMD related
+  if (type >= 31 && type <= 40) {
 
-    // temperature_coupling for the physical particles
-    if (!is_valid_real(param[3], &temperature_coupling)) {
-      PRINT_INPUT_ERROR("Temperature coupling should be a number.");
-    }
-    if (temperature_coupling < 1.0) {
-      PRINT_INPUT_ERROR("Temperature coupling should >= 1.");
-    }
-
-    // number of steps to be with PIMD, after which using TRPMD
-    if (!is_valid_int(param[4], &number_of_steps_pimd)) {
-      PRINT_INPUT_ERROR("Number of steps within the PIMD stage should be an integer.");
-    }
-    if (number_of_steps_pimd < 1) {
-      PRINT_INPUT_ERROR("Number of steps within the PIMD stage should >= 1.");
-    }
-
-    // number of beads
-    if (!is_valid_int(param[5], &number_of_beads)) {
+    // number of beads for RPMD, TRPMD, or PIMD
+    if (!is_valid_int(param[2], &number_of_beads)) {
       PRINT_INPUT_ERROR("number of beads should be an integer.");
     }
     if (number_of_beads < 2) {
@@ -489,6 +621,110 @@ void Integrate::parse_ensemble(
     }
     if (number_of_beads % 2 != 0) {
       PRINT_INPUT_ERROR("number of beads should be an even number.");
+    }
+
+    // thermostat and barostat for PIMD
+    if (type > 32) {
+      // initial temperature
+      if (!is_valid_real(param[3], &temperature1)) {
+        PRINT_INPUT_ERROR("Initial temperature should be a number.");
+      }
+      if (temperature1 <= 0.0) {
+        PRINT_INPUT_ERROR("Initial temperature should > 0.");
+      }
+      temperature = temperature1;
+
+      // final temperature
+      if (!is_valid_real(param[4], &temperature2)) {
+        PRINT_INPUT_ERROR("Final temperature should be a number.");
+      }
+      if (temperature2 <= 0.0) {
+        PRINT_INPUT_ERROR("Final temperature should > 0.");
+      }
+
+      // temperature_coupling
+      if (!is_valid_real(param[5], &temperature_coupling)) {
+        PRINT_INPUT_ERROR("Temperature coupling should be a number.");
+      }
+      if (temperature_coupling < 1.0) {
+        PRINT_INPUT_ERROR("Temperature coupling should >= 1.");
+      }
+
+      num_target_pressure_components = 0;
+
+      // pressures:
+      if (num_param >= 9) {
+        if (num_param == 13) {
+          for (int i = 0; i < 3; i++) {
+            if (!is_valid_real(param[6 + i], &target_pressure[i])) {
+              PRINT_INPUT_ERROR("Pressure should be a number.");
+            }
+          }
+          for (int i = 0; i < 3; i++) {
+            if (!is_valid_real(param[9 + i], &elastic_modulus[i])) {
+              PRINT_INPUT_ERROR("elastic modulus should be a number.");
+            }
+            if (elastic_modulus[i] <= 0) {
+              PRINT_INPUT_ERROR("elastic modulus should > 0.");
+            }
+          }
+          num_target_pressure_components = 3;
+          if (box.cpu_h[1] != 0 || box.cpu_h[2] != 0 || box.cpu_h[3] != 0 ||
+              box.cpu_h[5] != 0 || box.cpu_h[6] != 0 || box.cpu_h[7] != 0) {
+            PRINT_INPUT_ERROR("Cannot use triclinic box with only 3 target pressure components.");
+          }
+        } else if (num_param == 9) { // isotropic
+          if (!is_valid_real(param[6], &target_pressure[0])) {
+            PRINT_INPUT_ERROR("Pressure should be a number.");
+          }
+          if (!is_valid_real(param[7], &elastic_modulus[0])) {
+            PRINT_INPUT_ERROR("elastic modulus should be a number.");
+          }
+          if (elastic_modulus[0] <= 0) {
+            PRINT_INPUT_ERROR("elastic modulus should > 0.");
+          }
+          num_target_pressure_components = 1;
+          if (box.cpu_h[1] != 0 || box.cpu_h[2] != 0 || box.cpu_h[3] != 0 ||
+              box.cpu_h[5] != 0 || box.cpu_h[6] != 0 || box.cpu_h[7] != 0) {
+            PRINT_INPUT_ERROR("Cannot use triclinic box with only 1 target pressure component.");
+          }
+          if (box.pbc_x == 0 || box.pbc_y == 0 || box.pbc_z == 0) {
+            PRINT_INPUT_ERROR(
+              "Cannot use isotropic pressure with non-periodic boundary in any direction.");
+          }
+        } else { // then must be triclinic box
+          for (int i = 0; i < 6; i++) {
+            if (!is_valid_real(param[6 + i], &target_pressure[i])) {
+              PRINT_INPUT_ERROR("Pressure should be a number.");
+            }
+          }
+          for (int i = 0; i < 6; i++) {
+            if (!is_valid_real(param[12 + i], &elastic_modulus[i])) {
+              PRINT_INPUT_ERROR("elastic modulus should be a number.");
+            }
+            if (elastic_modulus[i] <= 0) {
+              PRINT_INPUT_ERROR("elastic modulus should > 0.");
+            }
+          }
+          num_target_pressure_components = 6;
+          if (box.pbc_x == 0 || box.pbc_y == 0 || box.pbc_z == 0) {
+            PRINT_INPUT_ERROR(
+              "Cannot use 6 pressure components with non-periodic boundary in any direction.");
+          }
+        }
+
+        // pressure_coupling:
+        int index_pressure_coupling = num_target_pressure_components * 2 + 6;
+        if (!is_valid_real(param[index_pressure_coupling], &tau_p)) {
+          PRINT_INPUT_ERROR("Pressure coupling should be a number.");
+        }
+        if (tau_p < 1) {
+          PRINT_INPUT_ERROR("Pressure coupling should >= 1.");
+        }
+        for (int i = 0; i < 6; i++) {
+          pressure_coupling[i] = 1.0 / (tau_p * 3.0 * elastic_modulus[i]);
+        }
+      }
     }
   }
 
@@ -532,11 +768,19 @@ void Integrate::parse_ensemble(
       printf("    tau_T is %g time_step.\n", temperature_coupling);
       break;
     case 11:
-      printf("Use NPT ensemble for this run.\n");
-      printf("    choose the Berendsen method.\n");
-      printf("    initial temperature is %g K.\n", temperature1);
-      printf("    final temperature is %g K.\n", temperature2);
-      printf("    tau_T is %g time_step\n", temperature_coupling);
+      if (temperature_coupling <= 100000) {
+        printf("Use NPT ensemble for this run.\n");
+        printf("    choose the Berendsen method.\n");
+        printf("    initial temperature is %g K.\n", temperature1);
+        printf("    final temperature is %g K.\n", temperature2);
+        printf("    tau_T is %g time_step\n", temperature_coupling);
+      } else {
+        printf("Use NPH ensemble for this run.\n");
+        printf("    choose the Berendsen method.\n");
+        printf("    initial temperature is %g K but will not be used.\n", temperature1);
+        printf("    final temperature is %g K but will not be used.\n", temperature2);
+        printf("    tau_T is %g time_step but will not be used.\n", temperature_coupling);
+      }
       if (num_target_pressure_components == 1) {
         printf("    isotropic pressure is %g GPa.\n", target_pressure[0]);
         printf("    bulk modulus is %g GPa.\n", elastic_modulus[0]);
@@ -600,12 +844,31 @@ void Integrate::parse_ensemble(
         printf("    modulus_xy is %g GPa.\n", elastic_modulus[5]);
       }
       printf("    tau_p is %g time_step.\n", tau_p);
-
       // Change the units of pressure form GPa to that used in the code
       for (int i = 0; i < 6; i++) {
         target_pressure[i] /= PRESSURE_UNIT_CONVERSION;
         pressure_coupling[i] *= PRESSURE_UNIT_CONVERSION;
       }
+      break;
+    case -1:
+      break;
+    case -2:
+      break;
+    case -3:
+      break;
+    case -4:
+      break;
+    case -5:
+      break;
+    case -6:
+      break;
+    case -7:
+      break;
+    case -8:
+      break;
+    case -9:
+      break;
+    case -10:
       break;
     case 21:
       printf("Integrate with heating and cooling for this run.\n");
@@ -641,11 +904,56 @@ void Integrate::parse_ensemble(
       printf("    heat sink is group %d in grouping method 0.\n", sink);
       break;
     case 31:
-      printf("Use NVT-PIMD ensemble for this run.\n");
-      printf("    temperature is %g K.\n", temperature);
-      printf("    tau_T is %g time_step.\n", temperature_coupling);
-      printf("    number of steps within PIMD is %d.\n", number_of_steps_pimd);
+      printf("Use ring-polymer MD (RPMD) for this run.\n");
       printf("    number of beads is %d.\n", number_of_beads);
+      break;
+    case 32:
+      printf("Use thermostatted ring-polyer MD (TRPMD) for this run.\n");
+      printf("    number of beads is %d.\n", number_of_beads);
+      break;
+    case 33:
+      if (num_param >= 9) {
+        printf("Use NPT-PIMD for this run.\n");
+      } else {
+        printf("Use NVT-PIMD for this run.\n");
+      }
+      printf("    number of beads is %d.\n", number_of_beads);
+      printf("    initial temperature is %g K.\n", temperature1);
+      printf("    final temperature is %g K.\n", temperature2);
+      printf("    tau_T is %g time_step.\n", temperature_coupling);
+      if (num_param >= 9) {
+        if (num_target_pressure_components == 1) {
+          printf("    isotropic pressure is %g GPa.\n", target_pressure[0]);
+          printf("    bulk modulus is %g GPa.\n", elastic_modulus[0]);
+        } else if (num_target_pressure_components == 3) {
+          printf("    pressure_xx is %g GPa.\n", target_pressure[0]);
+          printf("    pressure_yy is %g GPa.\n", target_pressure[1]);
+          printf("    pressure_zz is %g GPa.\n", target_pressure[2]);
+          printf("    modulus_xx is %g GPa.\n", elastic_modulus[0]);
+          printf("    modulus_yy is %g GPa.\n", elastic_modulus[1]);
+          printf("    modulus_zz is %g GPa.\n", elastic_modulus[2]);
+        } else if (num_target_pressure_components == 6) {
+          printf("    pressure_xx is %g GPa.\n", target_pressure[0]);
+          printf("    pressure_yy is %g GPa.\n", target_pressure[1]);
+          printf("    pressure_zz is %g GPa.\n", target_pressure[2]);
+          printf("    pressure_yz is %g GPa.\n", target_pressure[3]);
+          printf("    pressure_xz is %g GPa.\n", target_pressure[4]);
+          printf("    pressure_xy is %g GPa.\n", target_pressure[5]);
+          printf("    modulus_xx is %g GPa.\n", elastic_modulus[0]);
+          printf("    modulus_yy is %g GPa.\n", elastic_modulus[1]);
+          printf("    modulus_zz is %g GPa.\n", elastic_modulus[2]);
+          printf("    modulus_yz is %g GPa.\n", elastic_modulus[3]);
+          printf("    modulus_xz is %g GPa.\n", elastic_modulus[4]);
+          printf("    modulus_xy is %g GPa.\n", elastic_modulus[5]);
+        }
+        printf("    tau_p is %g time_step.\n", tau_p);
+
+        // Change the units of pressure form GPa to that used in the code
+        for (int i = 0; i < 6; i++) {
+          target_pressure[i] /= PRESSURE_UNIT_CONVERSION;
+          pressure_coupling[i] *= PRESSURE_UNIT_CONVERSION;
+        }
+      }
       break;
     default:
       PRINT_INPUT_ERROR("Invalid ensemble type.");
@@ -711,8 +1019,11 @@ void Integrate::parse_move(const char** param, int num_param, std::vector<Group>
   }
 
   printf(
-    "Group %d in grouping method 0 will move with velocity vector (%g, %g, %g) A/fs.\n", move_group,
-    move_velocity[0], move_velocity[1], move_velocity[2]);
+    "Group %d in grouping method 0 will move with velocity vector (%g, %g, %g) A/fs.\n",
+    move_group,
+    move_velocity[0],
+    move_velocity[1],
+    move_velocity[2]);
 
   for (int d = 0; d < 3; ++d) {
     move_velocity[d] *= TIME_UNIT_CONVERSION; // natural to A/fs
@@ -746,7 +1057,9 @@ void Integrate::parse_deform(const char** param, int num_param)
       PRINT_INPUT_ERROR("Defrom rate should be a number.");
     }
     printf(
-      "    strain rates are (%g, %g, %g) A / step.\n", deform_rate[0], deform_rate[1],
+      "    strain rates are (%g, %g, %g) A / step.\n",
+      deform_rate[0],
+      deform_rate[1],
       deform_rate[2]);
   }
 

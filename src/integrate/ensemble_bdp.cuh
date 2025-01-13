@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,8 +20,8 @@
 class Ensemble_BDP : public Ensemble
 {
 public:
-  Ensemble_BDP(int, int, int, double*, double, double);
-  Ensemble_BDP(int, int, int, int, double, double, double);
+  Ensemble_BDP(int, int, double*, double, double);
+  Ensemble_BDP(int, int, int, double, double, double);
   virtual ~Ensemble_BDP(void);
 
   virtual void compute1(

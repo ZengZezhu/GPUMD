@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,8 +22,10 @@ Dump velocity data to a file at a given interval.
 #include "parse_utilities.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/gpu_vector.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 #include <vector>
 
 void Dump_Velocity::parse(const char** param, int num_param, const std::vector<Group>& groups)
@@ -105,7 +107,9 @@ void Dump_Velocity::process(
     velocity_per_atom.copy_to_host(cpu_velocity_per_atom.data());
     for (int n = 0; n < num_atoms_total; n++) {
       fprintf(
-        fid_, "%g %g %g\n", cpu_velocity_per_atom[n] * natural_to_A_per_fs,
+        fid_,
+        "%g %g %g\n",
+        cpu_velocity_per_atom[n] * natural_to_A_per_fs,
         cpu_velocity_per_atom[n + num_atoms_total] * natural_to_A_per_fs,
         cpu_velocity_per_atom[n + 2 * num_atoms_total] * natural_to_A_per_fs);
     }
@@ -114,18 +118,25 @@ void Dump_Velocity::process(
     const int group_size_sum = groups[grouping_method_].cpu_size_sum[group_id_];
     GPU_Vector<double> gpu_velocity_tmp(group_size * 3);
     copy_velocity<<<(group_size - 1) / 128 + 1, 128>>>(
-      group_size, group_size_sum, groups[grouping_method_].contents.data(),
-      velocity_per_atom.data(), velocity_per_atom.data() + num_atoms_total,
-      velocity_per_atom.data() + 2 * num_atoms_total, gpu_velocity_tmp.data(),
-      gpu_velocity_tmp.data() + group_size, gpu_velocity_tmp.data() + group_size * 2);
+      group_size,
+      group_size_sum,
+      groups[grouping_method_].contents.data(),
+      velocity_per_atom.data(),
+      velocity_per_atom.data() + num_atoms_total,
+      velocity_per_atom.data() + 2 * num_atoms_total,
+      gpu_velocity_tmp.data(),
+      gpu_velocity_tmp.data() + group_size,
+      gpu_velocity_tmp.data() + group_size * 2);
     for (int d = 0; d < 3; ++d) {
       double* cpu_v = cpu_velocity_per_atom.data() + num_atoms_total * d;
       double* gpu_v = gpu_velocity_tmp.data() + group_size * d;
-      CHECK(cudaMemcpy(cpu_v, gpu_v, sizeof(double) * group_size, cudaMemcpyDeviceToHost));
+      CHECK(gpuMemcpy(cpu_v, gpu_v, sizeof(double) * group_size, gpuMemcpyDeviceToHost));
     }
     for (int n = 0; n < group_size; n++) {
       fprintf(
-        fid_, "%g %g %g\n", cpu_velocity_per_atom[n] * natural_to_A_per_fs,
+        fid_,
+        "%g %g %g\n",
+        cpu_velocity_per_atom[n] * natural_to_A_per_fs,
         cpu_velocity_per_atom[n + num_atoms_total] * natural_to_A_per_fs,
         cpu_velocity_per_atom[n + 2 * num_atoms_total] * natural_to_A_per_fs);
     }

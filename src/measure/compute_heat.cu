@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -26,6 +26,8 @@ https://doi.org/10.1103/PhysRevB.92.094301
 
 #include "compute_heat.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
+#include <cstring>
 
 namespace
 {
@@ -72,13 +74,25 @@ void compute_heat(
   // yx yy yz    6 1 5
   // zx zy zz    7 8 2
   gpu_compute_heat<<<(N - 1) / 128 + 1, 128>>>(
-    N, virial_per_atom.data(), virial_per_atom.data() + N * 3, virial_per_atom.data() + N * 4,
-    virial_per_atom.data() + N * 6, virial_per_atom.data() + N * 1, virial_per_atom.data() + N * 5,
-    virial_per_atom.data() + N * 7, virial_per_atom.data() + N * 8, virial_per_atom.data() + N * 2,
-    velocity_per_atom.data(), velocity_per_atom.data() + N, velocity_per_atom.data() + 2 * N,
-    heat_per_atom.data(), heat_per_atom.data() + N, heat_per_atom.data() + N * 2,
-    heat_per_atom.data() + N * 3, heat_per_atom.data() + N * 4);
-  CUDA_CHECK_KERNEL
+    N,
+    virial_per_atom.data(),
+    virial_per_atom.data() + N * 3,
+    virial_per_atom.data() + N * 4,
+    virial_per_atom.data() + N * 6,
+    virial_per_atom.data() + N * 1,
+    virial_per_atom.data() + N * 5,
+    virial_per_atom.data() + N * 7,
+    virial_per_atom.data() + N * 8,
+    virial_per_atom.data() + N * 2,
+    velocity_per_atom.data(),
+    velocity_per_atom.data() + N,
+    velocity_per_atom.data() + 2 * N,
+    heat_per_atom.data(),
+    heat_per_atom.data() + N,
+    heat_per_atom.data() + N * 2,
+    heat_per_atom.data() + N * 3,
+    heat_per_atom.data() + N * 4);
+  GPU_CHECK_KERNEL
 }
 
 namespace
@@ -130,11 +144,23 @@ void compute_heat(
   // yx yy yz    6 1 5
   // zx zy zz    7 8 2
   gpu_compute_heat<<<(N - 1) / 128 + 1, 128>>>(
-    N, mass.data(), potential.data(), virial_per_atom.data(), virial_per_atom.data() + N * 3,
-    virial_per_atom.data() + N * 4, virial_per_atom.data() + N * 6, virial_per_atom.data() + N * 1,
-    virial_per_atom.data() + N * 5, virial_per_atom.data() + N * 7, virial_per_atom.data() + N * 8,
-    virial_per_atom.data() + N * 2, velocity_per_atom.data(), velocity_per_atom.data() + N,
-    velocity_per_atom.data() + 2 * N, heat_per_atom.data(),
-    heat_per_atom.data() + N, heat_per_atom.data() + N * 2);
-  CUDA_CHECK_KERNEL
+    N,
+    mass.data(),
+    potential.data(),
+    virial_per_atom.data(),
+    virial_per_atom.data() + N * 3,
+    virial_per_atom.data() + N * 4,
+    virial_per_atom.data() + N * 6,
+    virial_per_atom.data() + N * 1,
+    virial_per_atom.data() + N * 5,
+    virial_per_atom.data() + N * 7,
+    virial_per_atom.data() + N * 8,
+    virial_per_atom.data() + N * 2,
+    velocity_per_atom.data(),
+    velocity_per_atom.data() + N,
+    velocity_per_atom.data() + 2 * N,
+    heat_per_atom.data(),
+    heat_per_atom.data() + N,
+    heat_per_atom.data() + N * 2);
+  GPU_CHECK_KERNEL
 }

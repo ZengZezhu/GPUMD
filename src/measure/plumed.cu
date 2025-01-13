@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,8 +22,10 @@ Interface to the PLUMED plugin: https://www.plumed.org
 #include "plumed.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/gpu_vector.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 
 #define E_C 1.602176634E-19 // Elementary charge
 #define N_A 6.0221367E23    // Avogadro constant
@@ -183,7 +185,7 @@ void PLUMED::process(
   }
 
   gpu_sum<<<6, 1024>>>(n_atom, virial.data(), gpu_v_vector.data());
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
   gpu_v_vector.copy_to_host(tmp.data());
   fill(cpu_v_vector.begin(), cpu_v_vector.end(), 0.0);
 
@@ -215,10 +217,15 @@ void PLUMED::process(
   cpu_v_factor[8] = (tmp[2] - cpu_v_vector[8]) / tmp[2];
   gpu_v_factor.copy_from_host(cpu_v_factor.data());
   gpu_scale_virial<<<(n_atom - 1) / 128 + 1, 128>>>(
-    n_atom, gpu_v_factor.data(), virial.data() + n_atom * 0, virial.data() + n_atom * 1,
-    virial.data() + n_atom * 2, virial.data() + n_atom * 3, virial.data() + n_atom * 4,
+    n_atom,
+    gpu_v_factor.data(),
+    virial.data() + n_atom * 0,
+    virial.data() + n_atom * 1,
+    virial.data() + n_atom * 2,
+    virial.data() + n_atom * 3,
+    virial.data() + n_atom * 4,
     virial.data() + n_atom * 5);
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
 }
 
 void PLUMED::postprocess(void)

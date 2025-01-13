@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,8 +19,8 @@
 class Ensemble_NHC : public Ensemble
 {
 public:
-  Ensemble_NHC(int, int, int, double*, int, double, double, double);
-  Ensemble_NHC(int, int, int, int, int, int, double, double, double, double);
+  Ensemble_NHC(int, int, double*, int, double, double, double);
+  Ensemble_NHC(int, int, int, int, int, double, double, double, double);
   virtual ~Ensemble_NHC(void);
 
   virtual void compute1(

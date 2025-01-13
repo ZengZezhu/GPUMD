@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,11 +17,15 @@
 #include "active.cuh"
 #include "compute.cuh"
 #include "dos.cuh"
+#include "dump_beads.cuh"
+#include "dump_dipole.cuh"
 #include "dump_exyz.cuh"
 #include "dump_force.cuh"
 #include "dump_observer.cuh"
+#include "dump_polarizability.cuh"
 #include "dump_position.cuh"
 #include "dump_restart.cuh"
+#include "dump_shock_nemd.cuh"
 #include "dump_thermo.cuh"
 #include "dump_velocity.cuh"
 #include "force/force.cuh"
@@ -29,10 +33,12 @@
 #include "hnemd_kappa.cuh"
 #include "hnemdec_kappa.cuh"
 #include "integrate/integrate.cuh"
+#include "lsqt.cuh"
 #include "modal_analysis.cuh"
 #include "model/box.cuh"
 #include "model/group.cuh"
 #include "msd.cuh"
+#include "rdf.cuh"
 #include "sdc.cuh"
 #include "shc.cuh"
 #include "utilities/gpu_vector.cuh"
@@ -53,16 +59,21 @@ public:
   void initialize(
     const int number_of_steps,
     const double time_step,
-    Box& box,
+    Integrate& integrate,
     std::vector<Group>& group,
     Atom& atom,
+    Box& box,
     Force& force);
 
   void finalize(
+    Atom& atom,
+    Box& box,
+    Integrate& integrate,
     const int number_of_steps,
     const double time_step,
     const double temperature,
-    const double volume);
+    const double volume,
+    const double number_of_beads);
 
   void process(
     const int number_of_steps,
@@ -78,10 +89,12 @@ public:
     Atom& atom,
     Force& force);
 
+  LSQT lsqt;
   DOS dos;
   SDC sdc;
   MSD msd;
   HAC hac;
+  RDF rdf;
   Viscosity viscosity;
   SHC shc;
   HNEMD hnemd;
@@ -94,7 +107,11 @@ public:
   Dump_Restart dump_restart;
   Dump_Force dump_force;
   Dump_EXYZ dump_exyz;
+  Dump_Beads dump_beads;
   Dump_Observer dump_observer;
+  Dump_Shock_NEMD dump_shock_nemd;
+  Dump_Dipole dump_dipole;
+  Dump_Polarizability dump_polarizability;
   Active active;
 #ifdef USE_NETCDF
   DUMP_NETCDF dump_netcdf;

@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,12 +18,10 @@ The NVE ensemble integrator.
 ------------------------------------------------------------------------------*/
 
 #include "ensemble_nve.cuh"
+#include "utilities/gpu_macro.cuh"
+#include <cstring>
 
-Ensemble_NVE::Ensemble_NVE(int t, int fg)
-{
-  type = t;
-  fixed_group = fg;
-}
+Ensemble_NVE::Ensemble_NVE(int t) { type = t; }
 
 Ensemble_NVE::~Ensemble_NVE(void)
 {
@@ -38,7 +36,12 @@ void Ensemble_NVE::compute1(
   GPU_Vector<double>& thermo)
 {
   velocity_verlet(
-    true, time_step, group, atom.mass, atom.force_per_atom, atom.position_per_atom,
+    true,
+    time_step,
+    group,
+    atom.mass,
+    atom.force_per_atom,
+    atom.position_per_atom,
     atom.velocity_per_atom);
 }
 
@@ -50,10 +53,21 @@ void Ensemble_NVE::compute2(
   GPU_Vector<double>& thermo)
 {
   velocity_verlet(
-    false, time_step, group, atom.mass, atom.force_per_atom, atom.position_per_atom,
+    false,
+    time_step,
+    group,
+    atom.mass,
+    atom.force_per_atom,
+    atom.position_per_atom,
     atom.velocity_per_atom);
 
   find_thermo(
-    false, box.get_volume(), group, atom.mass, atom.potential_per_atom, atom.velocity_per_atom,
-    atom.virial_per_atom, thermo);
+    false,
+    box.get_volume(),
+    group,
+    atom.mass,
+    atom.potential_per_atom,
+    atom.velocity_per_atom,
+    atom.virial_per_atom,
+    thermo);
 }

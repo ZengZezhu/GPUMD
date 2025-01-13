@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -33,6 +33,7 @@ struct Tersoff1988_Data {
 class Tersoff1988 : public Potential
 {
 public:
+  using Potential::compute;
   Tersoff1988(FILE*, int sum_of_types, const int num_atoms);
   virtual ~Tersoff1988(void);
   virtual void compute(

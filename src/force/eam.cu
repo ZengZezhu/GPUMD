@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,6 +22,8 @@ The EAM potential. Currently two analytical versions:
 #include "eam.cuh"
 #include "neighbor.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
+#include <cstring>
 #define BLOCK_SIZE_FORCE 64
 
 EAM::EAM(FILE* fid, char* name, int num_types, const int number_of_atoms)
@@ -482,45 +484,98 @@ void EAM::compute(
   if (num_calls++ == 0) {
 #endif
     find_neighbor(
-      N1, N2, rc, box, type, position_per_atom, eam_data.cell_count, eam_data.cell_count_sum,
-      eam_data.cell_contents, eam_data.NN, eam_data.NL);
+      N1,
+      N2,
+      rc,
+      box,
+      type,
+      position_per_atom,
+      eam_data.cell_count,
+      eam_data.cell_count_sum,
+      eam_data.cell_contents,
+      eam_data.NN,
+      eam_data.NL);
 #ifdef USE_FIXED_NEIGHBOR
   }
 #endif
 
   if (potential_model == 0) {
     find_force_eam_step1<0><<<grid_size, BLOCK_SIZE_FORCE>>>(
-      eam2004zhou, eam2006dai, number_of_atoms, N1, N2, box, eam_data.NN.data(), eam_data.NL.data(),
-      type.data(), position_per_atom.data(), position_per_atom.data() + number_of_atoms,
-      position_per_atom.data() + number_of_atoms * 2, eam_data.Fp.data(),
+      eam2004zhou,
+      eam2006dai,
+      number_of_atoms,
+      N1,
+      N2,
+      box,
+      eam_data.NN.data(),
+      eam_data.NL.data(),
+      type.data(),
+      position_per_atom.data(),
+      position_per_atom.data() + number_of_atoms,
+      position_per_atom.data() + number_of_atoms * 2,
+      eam_data.Fp.data(),
       potential_per_atom.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
 
     find_force_eam_step2<0><<<grid_size, BLOCK_SIZE_FORCE>>>(
-      eam2004zhou, eam2006dai, number_of_atoms, N1, N2, box, eam_data.NN.data(), eam_data.NL.data(),
-      type.data(), eam_data.Fp.data(), position_per_atom.data(),
-      position_per_atom.data() + number_of_atoms, position_per_atom.data() + number_of_atoms * 2,
-      force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-      force_per_atom.data() + 2 * number_of_atoms, virial_per_atom.data(),
+      eam2004zhou,
+      eam2006dai,
+      number_of_atoms,
+      N1,
+      N2,
+      box,
+      eam_data.NN.data(),
+      eam_data.NL.data(),
+      type.data(),
+      eam_data.Fp.data(),
+      position_per_atom.data(),
+      position_per_atom.data() + number_of_atoms,
+      position_per_atom.data() + number_of_atoms * 2,
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms,
+      virial_per_atom.data(),
       potential_per_atom.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   }
 
   if (potential_model == 1) {
     find_force_eam_step1<1><<<grid_size, BLOCK_SIZE_FORCE>>>(
-      eam2004zhou, eam2006dai, number_of_atoms, N1, N2, box, eam_data.NN.data(), eam_data.NL.data(),
-      type.data(), position_per_atom.data(), position_per_atom.data() + number_of_atoms,
-      position_per_atom.data() + number_of_atoms * 2, eam_data.Fp.data(),
+      eam2004zhou,
+      eam2006dai,
+      number_of_atoms,
+      N1,
+      N2,
+      box,
+      eam_data.NN.data(),
+      eam_data.NL.data(),
+      type.data(),
+      position_per_atom.data(),
+      position_per_atom.data() + number_of_atoms,
+      position_per_atom.data() + number_of_atoms * 2,
+      eam_data.Fp.data(),
       potential_per_atom.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
 
     find_force_eam_step2<1><<<grid_size, BLOCK_SIZE_FORCE>>>(
-      eam2004zhou, eam2006dai, number_of_atoms, N1, N2, box, eam_data.NN.data(), eam_data.NL.data(),
-      type.data(), eam_data.Fp.data(), position_per_atom.data(),
-      position_per_atom.data() + number_of_atoms, position_per_atom.data() + number_of_atoms * 2,
-      force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-      force_per_atom.data() + 2 * number_of_atoms, virial_per_atom.data(),
+      eam2004zhou,
+      eam2006dai,
+      number_of_atoms,
+      N1,
+      N2,
+      box,
+      eam_data.NN.data(),
+      eam_data.NL.data(),
+      type.data(),
+      eam_data.Fp.data(),
+      position_per_atom.data(),
+      position_per_atom.data() + number_of_atoms,
+      position_per_atom.data() + number_of_atoms * 2,
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms,
+      virial_per_atom.data(),
       potential_per_atom.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   }
 }

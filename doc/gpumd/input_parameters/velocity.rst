@@ -9,11 +9,13 @@ This keyword is used to initialize the velocities of the atoms in the system acc
 
 Syntax
 ------
-* This keyword only has one parameter, which is the initial temperature of the system::
+* This keyword can be used in the following ways::
   
     velocity <initial_temperature>
+    velocity <initial_temperature> seed <seed_number>
 
 * The temperature is in units of kelvin (K).
+* You can specify a seed for the random number generator to generate a fixed temperature distribution, which is optional. If not specified, the velocities are initialized differently each time.
 
 Example
 -------
@@ -31,4 +33,4 @@ Caveats
   This is, however, not a problem since during the MD simulation, the Maxwell distribution will be achieved automatically within a short time.
 * The total linear and angular momenta are set to zero.
 * If there are already velocity data in the :ref:`simulation model file <model_xyz>`, the initial temperature will not be used and the velocities will be initialized as those in the simulation model file.
-  **Important:** In this case, you still need to write this keyword, otherwise the velocities will not be initialized at all (and will hence be undefined).
+* If there are not velocity data in the :ref:`simulation model file <model_xyz>`, and this keyword is missing, velocities will be initialized with a default temperature of 300 K.

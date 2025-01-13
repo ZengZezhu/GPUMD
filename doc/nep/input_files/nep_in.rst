@@ -7,7 +7,7 @@
 
 This file specifies hyperparameters used for training neuroevolution potential (:term:`NEP`) models, the functional form of which is outline :ref:`here <nep_formalism>`.
 The :term:`NEP` approach was proposed in [Fan2021]_ (NEP1) and later improved in [Fan2022a]_ (NEP2) and [Fan2022b]_ (NEP3).
-Currently, we support NEP2, NEP3 and NEP4 (to be published), which can be chosen by the :ref:`version keyword <kw_version>`.
+Currently, we support NEP3, NEP4 (to be published), and NEP5 (to be published), which can be chosen by the :ref:`version keyword <kw_version>`.
 
 File format
 -----------
@@ -35,11 +35,15 @@ Keywords
    * - Keyword
      - Brief description
    * - :ref:`version <kw_version>`
-     - select between NEP2, NEP3, and NEP4
+     - select the NEP version
    * - :ref:`type <kw_type>`
      - number of atom types and list of chemical species
    * - :ref:`type_weight <kw_type_weight>`
      - force weights for different atom types
+   * - :ref:`model_type <kw_model_type>`
+     - select to train potential, dipole, or polarizability
+   * - :ref:`prediction <kw_prediction>`
+     - select between training and prediction (inference)
    * - :ref:`zbl <kw_zbl>`
      - outer cutoff for the universal :term:`ZBL` potential [Ziegler1985]_
    * - :ref:`cutoff <kw_cutoff>`
@@ -79,7 +83,7 @@ Here is an example :attr:`nep.in` file using all the default parameters::
   version       4       # default
   cutoff     	8 4     # default
   n_max      	4 4     # default
-  basis_size	12 12   # default
+  basis_size	8 8     # default
   l_max      	4 2 0   # default
   neuron     	30      # default
   lambda_e      1.0     # default
@@ -89,5 +93,5 @@ Here is an example :attr:`nep.in` file using all the default parameters::
   population	50      # default
   generation	100000  # default
 
-The `NEP tutorial <https://github.com/brucefan1983/GPUMD/blob/master/examples/nep_potentials/PbTe/train/nep_tutorial.ipynb>`_ illustrates the construction of a :term:`NEP` model.
+The `NEP tutorial <https://github.com/brucefan1983/GPUMD/tree/master/examples/11_NEP_potential_PbTe/tutorial.ipynb>`_ illustrates the construction of a :term:`NEP` model.
 More examples can be found in `this repository <https://gitlab.com/brucefan1983/nep-data>`_.

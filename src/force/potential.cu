@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,9 +19,11 @@ The abstract base class (ABC) for the potential classes.
 
 #include "potential.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #define BLOCK_SIZE_FORCE 64
 #include <thrust/execution_policy.h>
 #include <thrust/scan.h>
+#include <cstring>
 
 Potential::Potential(void) { rc = 0.0; }
 
@@ -146,14 +148,27 @@ void Potential::find_properties_many_body(
   int grid_size = (N2 - N1 - 1) / BLOCK_SIZE_FORCE + 1;
 
   gpu_find_force_many_body<<<grid_size, BLOCK_SIZE_FORCE>>>(
-    number_of_atoms, N1, N2, box, NN, NL, f12x, f12y, f12z, position_per_atom.data(),
-    position_per_atom.data() + number_of_atoms, position_per_atom.data() + number_of_atoms * 2,
-    force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-    force_per_atom.data() + 2 * number_of_atoms, virial_per_atom.data());
-  CUDA_CHECK_KERNEL
+    number_of_atoms,
+    N1,
+    N2,
+    box,
+    NN,
+    NL,
+    f12x,
+    f12y,
+    f12z,
+    position_per_atom.data(),
+    position_per_atom.data() + number_of_atoms,
+    position_per_atom.data() + number_of_atoms * 2,
+    force_per_atom.data(),
+    force_per_atom.data() + number_of_atoms,
+    force_per_atom.data() + 2 * number_of_atoms,
+    virial_per_atom.data());
+  GPU_CHECK_KERNEL
 }
 
 static __global__ void gpu_find_force_many_body(
+  const bool is_dipole,
   const int number_of_particles,
   const int N1,
   const int N2,
@@ -194,7 +209,6 @@ static __global__ void gpu_find_force_many_body(
     for (int i1 = 0; i1 < neighbor_number; ++i1) {
       int index = i1 * number_of_particles + n1;
       int n2 = g_neighbor_list[index];
-      int neighbor_number_2 = g_neighbor_number[n2];
 
       double x12double = g_x[n2] - x1;
       double y12double = g_y[n2] - y1;
@@ -207,14 +221,30 @@ static __global__ void gpu_find_force_many_body(
       float f12x = g_f12x[index];
       float f12y = g_f12y[index];
       float f12z = g_f12z[index];
-      int offset = 0;
-      for (int k = 0; k < neighbor_number_2; ++k) {
-        if (n1 == g_neighbor_list[n2 + number_of_particles * k]) {
-          offset = k;
+      // int offset = 0;
+
+      int l = 0;
+      int r = g_neighbor_number[n2];
+      int m = 0;
+      int tmp_value = 0;
+      while (l < r) {
+        m = (l + r) >> 1;
+        tmp_value = g_neighbor_list[n2 + number_of_particles * m];
+        if (tmp_value < n1) {
+          l = m + 1;
+        } else if (tmp_value > n1) {
+          r = m - 1;
+        } else {
           break;
         }
       }
-      index = offset * number_of_particles + n2;
+      // for (int k = 0; k < neighbor_number_2; ++k) {
+      //   if (n1 == g_neighbor_list[n2 + number_of_particles * k]) {
+      //     offset = k;
+      //     break;
+      //   }
+      // }
+      index = ((l + r) >> 1) * number_of_particles + n2;
       float f21x = g_f12x[index];
       float f21y = g_f12y[index];
       float f21z = g_f12z[index];
@@ -225,15 +255,24 @@ static __global__ void gpu_find_force_many_body(
       s_fz += f12z - f21z;
 
       // per-atom virial
-      s_sxx += x12 * f21x;
+      if (is_dipole) {
+        // Float version of the function
+        // The dipole is proportional to minus the sum of the virials times r12
+        float r12_square = x12 * x12 + y12 * y12 + z12 * z12;
+        s_sxx -= r12_square * f21x;
+        s_syy -= r12_square * f21y;
+        s_szz -= r12_square * f21z;
+      } else {
+        s_sxx += x12 * f21x;
+        s_syy += y12 * f21y;
+        s_szz += z12 * f21z;
+      }
       s_sxy += x12 * f21y;
       s_sxz += x12 * f21z;
       s_syx += y12 * f21x;
-      s_syy += y12 * f21y;
       s_syz += y12 * f21z;
       s_szx += z12 * f21x;
       s_szy += z12 * f21y;
-      s_szz += z12 * f21z;
     }
 
     // save force
@@ -264,6 +303,7 @@ void Potential::find_properties_many_body(
   const float* f12x,
   const float* f12y,
   const float* f12z,
+  const bool is_dipole,
   const GPU_Vector<double>& position_per_atom,
   GPU_Vector<double>& force_per_atom,
   GPU_Vector<double>& virial_per_atom)
@@ -272,9 +312,22 @@ void Potential::find_properties_many_body(
   int grid_size = (N2 - N1 - 1) / BLOCK_SIZE_FORCE + 1;
 
   gpu_find_force_many_body<<<grid_size, BLOCK_SIZE_FORCE>>>(
-    number_of_atoms, N1, N2, box, NN, NL, f12x, f12y, f12z, position_per_atom.data(),
-    position_per_atom.data() + number_of_atoms, position_per_atom.data() + number_of_atoms * 2,
-    force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-    force_per_atom.data() + 2 * number_of_atoms, virial_per_atom.data());
-  CUDA_CHECK_KERNEL
+    is_dipole,
+    number_of_atoms,
+    N1,
+    N2,
+    box,
+    NN,
+    NL,
+    f12x,
+    f12y,
+    f12z,
+    position_per_atom.data(),
+    position_per_atom.data() + number_of_atoms,
+    position_per_atom.data() + number_of_atoms * 2,
+    force_per_atom.data(),
+    force_per_atom.data() + number_of_atoms,
+    force_per_atom.data() + 2 * number_of_atoms,
+    virial_per_atom.data());
+  GPU_CHECK_KERNEL
 }

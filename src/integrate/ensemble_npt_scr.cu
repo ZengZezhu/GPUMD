@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,7 +24,9 @@ J. Chem. Phys. 153, 114107 (2020).
 #include "npt_utilities.cuh"
 #include "svr_utilities.cuh"
 #include "utilities/common.cuh"
+#include "utilities/gpu_macro.cuh"
 #include <chrono>
+#include <cstring>
 
 void Ensemble_NPT_SCR::initialize_rng()
 {
@@ -37,7 +39,6 @@ void Ensemble_NPT_SCR::initialize_rng()
 
 Ensemble_NPT_SCR::Ensemble_NPT_SCR(
   int type_input,
-  int fixed_group_input,
   double temperature_input,
   double temperature_coupling_input,
   double target_pressure_input[6],
@@ -49,7 +50,6 @@ Ensemble_NPT_SCR::Ensemble_NPT_SCR(
   double deform_rate_input[3])
 {
   type = type_input;
-  fixed_group = fixed_group_input;
   temperature = temperature_input;
   temperature_coupling = temperature_coupling_input;
   for (int i = 0; i < 6; i++) {
@@ -87,55 +87,51 @@ static void cpu_pressure_orthogonal(
   double* scale_factor)
 {
   double p[3];
-  CHECK(cudaMemcpy(p, thermo + 2, sizeof(double) * 3, cudaMemcpyDeviceToHost));
+  CHECK(gpuMemcpy(p, thermo + 2, sizeof(double) * 3, gpuMemcpyDeviceToHost));
 
   if (deform_x) {
     scale_factor[0] = box.cpu_h[0];
     scale_factor[0] = (scale_factor[0] + deform_rate[0]) / scale_factor[0];
     box.cpu_h[0] *= scale_factor[0];
-    box.cpu_h[3] = box.cpu_h[0] * 0.5;
   } else if (box.pbc_x == 1) {
     const double scale_factor_Berendsen = 1.0 - p_coupling[0] * (p0[0] - p[0]);
     const double scale_factor_stochastic =
       sqrt(2.0 * p_coupling[0] * K_B * target_temperature / box.get_volume()) * gasdev(rng);
     scale_factor[0] = scale_factor_Berendsen + scale_factor_stochastic;
     box.cpu_h[0] *= scale_factor[0];
-    box.cpu_h[3] = box.cpu_h[0] * 0.5;
   } else {
     scale_factor[0] = 1.0;
   }
 
   if (deform_y) {
-    scale_factor[1] = box.cpu_h[1];
+    scale_factor[1] = box.cpu_h[4];
     scale_factor[1] = (scale_factor[1] + deform_rate[1]) / scale_factor[1];
-    box.cpu_h[1] *= scale_factor[1];
-    box.cpu_h[4] = box.cpu_h[1] * 0.5;
+    box.cpu_h[4] *= scale_factor[1];
   } else if (box.pbc_y == 1) {
     const double scale_factor_Berendsen = 1.0 - p_coupling[1] * (p0[1] - p[1]);
     const double scale_factor_stochastic =
       sqrt(2.0 * p_coupling[1] * K_B * target_temperature / box.get_volume()) * gasdev(rng);
     scale_factor[1] = scale_factor_Berendsen + scale_factor_stochastic;
-    box.cpu_h[1] *= scale_factor[1];
-    box.cpu_h[4] = box.cpu_h[1] * 0.5;
+    box.cpu_h[4] *= scale_factor[1];
   } else {
     scale_factor[1] = 1.0;
   }
 
   if (deform_z) {
-    scale_factor[2] = box.cpu_h[2];
+    scale_factor[2] = box.cpu_h[8];
     scale_factor[2] = (scale_factor[2] + deform_rate[2]) / scale_factor[2];
-    box.cpu_h[2] *= scale_factor[2];
-    box.cpu_h[5] = box.cpu_h[2] * 0.5;
+    box.cpu_h[8] *= scale_factor[2];
   } else if (box.pbc_z == 1) {
     const double scale_factor_Berendsen = 1.0 - p_coupling[2] * (p0[2] - p[2]);
     const double scale_factor_stochastic =
       sqrt(2.0 * p_coupling[2] * K_B * target_temperature / box.get_volume()) * gasdev(rng);
     scale_factor[2] = scale_factor_Berendsen + scale_factor_stochastic;
-    box.cpu_h[2] *= scale_factor[2];
-    box.cpu_h[5] = box.cpu_h[2] * 0.5;
+    box.cpu_h[8] *= scale_factor[2];
   } else {
     scale_factor[2] = 1.0;
   }
+
+  box.get_inverse();
 }
 
 static void cpu_pressure_isotropic(
@@ -148,7 +144,7 @@ static void cpu_pressure_isotropic(
   double& scale_factor)
 {
   double p[3];
-  CHECK(cudaMemcpy(p, thermo + 2, sizeof(double) * 3, cudaMemcpyDeviceToHost));
+  CHECK(gpuMemcpy(p, thermo + 2, sizeof(double) * 3, gpuMemcpyDeviceToHost));
   const double pressure_instant = (p[0] + p[1] + p[2]) * 0.3333333333333333;
   const double scale_factor_Berendsen =
     1.0 - p_coupling[0] * (target_pressure[0] - pressure_instant);
@@ -158,11 +154,9 @@ static void cpu_pressure_isotropic(
     gasdev(rng);
   scale_factor = scale_factor_Berendsen + scale_factor_stochastic;
   box.cpu_h[0] *= scale_factor;
-  box.cpu_h[1] *= scale_factor;
-  box.cpu_h[2] *= scale_factor;
-  box.cpu_h[3] = box.cpu_h[0] * 0.5;
-  box.cpu_h[4] = box.cpu_h[1] * 0.5;
-  box.cpu_h[5] = box.cpu_h[2] * 0.5;
+  box.cpu_h[4] *= scale_factor;
+  box.cpu_h[8] *= scale_factor;
+  box.get_inverse();
 }
 
 static void cpu_pressure_triclinic(
@@ -176,7 +170,7 @@ static void cpu_pressure_triclinic(
 {
   // p_coupling and p0 are in Voigt notation: xx, yy, zz, yz, xz, xy
   double p[6]; // but thermo is this order: xx, yy, zz, xy, xz, yz
-  CHECK(cudaMemcpy(p, thermo + 2, sizeof(double) * 6, cudaMemcpyDeviceToHost));
+  CHECK(gpuMemcpy(p, thermo + 2, sizeof(double) * 6, gpuMemcpyDeviceToHost));
   mu[0] = 1.0 - p_coupling[0] * (p0[0] - p[0]);    // xx
   mu[4] = 1.0 - p_coupling[1] * (p0[1] - p[1]);    // yy
   mu[8] = 1.0 - p_coupling[2] * (p0[2] - p[2]);    // zz
@@ -218,7 +212,12 @@ void Ensemble_NPT_SCR::compute1(
   GPU_Vector<double>& thermo)
 {
   velocity_verlet(
-    true, time_step, group, atom.mass, atom.force_per_atom, atom.position_per_atom,
+    true,
+    time_step,
+    group,
+    atom.mass,
+    atom.force_per_atom,
+    atom.position_per_atom,
     atom.velocity_per_atom);
 }
 
@@ -232,13 +231,24 @@ void Ensemble_NPT_SCR::compute2(
   const int number_of_atoms = atom.mass.size();
 
   velocity_verlet(
-    false, time_step, group, atom.mass, atom.force_per_atom, atom.position_per_atom,
+    false,
+    time_step,
+    group,
+    atom.mass,
+    atom.force_per_atom,
+    atom.position_per_atom,
     atom.velocity_per_atom);
 
   int N_fixed = (fixed_group == -1) ? 0 : group[0].cpu_size[fixed_group];
   find_thermo(
-    true, box.get_volume(), group, atom.mass, atom.potential_per_atom, atom.velocity_per_atom,
-    atom.virial_per_atom, thermo);
+    true,
+    box.get_volume(),
+    group,
+    atom.mass,
+    atom.potential_per_atom,
+    atom.velocity_per_atom,
+    atom.virial_per_atom,
+    thermo);
 
   double ek[1];
   thermo.copy_to_host(ek, 1);
@@ -254,26 +264,51 @@ void Ensemble_NPT_SCR::compute2(
     cpu_pressure_isotropic(
       rng, box, temperature, target_pressure, pressure_coupling, thermo.data(), scale_factor);
     gpu_pressure_isotropic<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, scale_factor, atom.position_per_atom.data(),
+      number_of_atoms,
+      scale_factor,
+      atom.position_per_atom.data(),
       atom.position_per_atom.data() + number_of_atoms,
       atom.position_per_atom.data() + number_of_atoms * 2);
   } else if (num_target_pressure_components == 3) {
     double scale_factor[3];
     cpu_pressure_orthogonal(
-      rng, deform_x, deform_y, deform_z, deform_rate, box, temperature, target_pressure,
-      pressure_coupling, thermo.data(), scale_factor);
+      rng,
+      deform_x,
+      deform_y,
+      deform_z,
+      deform_rate,
+      box,
+      temperature,
+      target_pressure,
+      pressure_coupling,
+      thermo.data(),
+      scale_factor);
     gpu_pressure_orthogonal<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, scale_factor[0], scale_factor[1], scale_factor[2],
-      atom.position_per_atom.data(), atom.position_per_atom.data() + number_of_atoms,
+      number_of_atoms,
+      scale_factor[0],
+      scale_factor[1],
+      scale_factor[2],
+      atom.position_per_atom.data(),
+      atom.position_per_atom.data() + number_of_atoms,
       atom.position_per_atom.data() + number_of_atoms * 2);
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   } else {
     double mu[9];
     cpu_pressure_triclinic(
       rng, box, temperature, target_pressure, pressure_coupling, thermo.data(), mu);
     gpu_pressure_triclinic<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, mu[0], mu[1], mu[2], mu[3], mu[4], mu[5], mu[6], mu[7], mu[8],
-      atom.position_per_atom.data(), atom.position_per_atom.data() + number_of_atoms,
+      number_of_atoms,
+      mu[0],
+      mu[1],
+      mu[2],
+      mu[3],
+      mu[4],
+      mu[5],
+      mu[6],
+      mu[7],
+      mu[8],
+      atom.position_per_atom.data(),
+      atom.position_per_atom.data() + number_of_atoms,
       atom.position_per_atom.data() + number_of_atoms * 2);
   }
 }

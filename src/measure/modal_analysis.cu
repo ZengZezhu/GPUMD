@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,6 +31,8 @@ GPUMD Contributing author: Alexander Gabourie (Stanford University)
 
 #include "modal_analysis.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
+#include <cstring>
 
 #define NUM_OF_HEAT_COMPONENTS 5
 #define BLOCK_SIZE 128
@@ -88,7 +90,7 @@ static __device__ void gpu_bin_reduce(
   }
 
   __syncthreads();
-#pragma unroll
+
   for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
     if (tid < offset) {
       s_data_xin[tid] += s_data_xin[tid + offset];
@@ -242,58 +244,163 @@ void MODAL_ANALYSIS::compute_heat(
   int grid_size = (num_participating - 1) / BLOCK_SIZE + 1;
   // precalculate velocity*sqrt(mass)
   elemwise_mass_scale<<<grid_size, BLOCK_SIZE>>>(
-    num_participating, N1, sqrtmass.data(), velocity_per_atom.data(),
-    velocity_per_atom.data() + number_of_atoms, velocity_per_atom.data() + 2 * number_of_atoms,
-    mvx.data(), mvy.data(), mvz.data());
-  CUDA_CHECK_KERNEL
+    num_participating,
+    N1,
+    sqrtmass.data(),
+    velocity_per_atom.data(),
+    velocity_per_atom.data() + number_of_atoms,
+    velocity_per_atom.data() + 2 * number_of_atoms,
+    mvx.data(),
+    mvy.data(),
+    mvz.data());
+  GPU_CHECK_KERNEL
 
   // Scale stress tensor by inv(sqrt(mass))
   prepare_sm<<<grid_size, BLOCK_SIZE>>>(
-    num_participating, N1, virial_per_atom.data(), virial_per_atom.data() + number_of_atoms * 3,
-    virial_per_atom.data() + number_of_atoms * 4, virial_per_atom.data() + number_of_atoms * 6,
-    virial_per_atom.data() + number_of_atoms * 1, virial_per_atom.data() + number_of_atoms * 5,
-    virial_per_atom.data() + number_of_atoms * 7, virial_per_atom.data() + number_of_atoms * 8,
-    virial_per_atom.data() + number_of_atoms * 2, rsqrtmass.data(), smx.data(), smy.data(),
+    num_participating,
+    N1,
+    virial_per_atom.data(),
+    virial_per_atom.data() + number_of_atoms * 3,
+    virial_per_atom.data() + number_of_atoms * 4,
+    virial_per_atom.data() + number_of_atoms * 6,
+    virial_per_atom.data() + number_of_atoms * 1,
+    virial_per_atom.data() + number_of_atoms * 5,
+    virial_per_atom.data() + number_of_atoms * 7,
+    virial_per_atom.data() + number_of_atoms * 8,
+    virial_per_atom.data() + number_of_atoms * 2,
+    rsqrtmass.data(),
+    smx.data(),
+    smy.data(),
     smz.data());
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
 
   const float alpha = 1.0;
   const float beta = 0.0;
   int stride = 1;
 
   // Calculate modal velocities
-  cublasSgemv(
-    ma_handle, CUBLAS_OP_N, num_modes, num_participating, &alpha, eigx.data(), num_modes,
-    mvx.data(), stride, &beta, xdotx.data(), stride);
-  cublasSgemv(
-    ma_handle, CUBLAS_OP_N, num_modes, num_participating, &alpha, eigy.data(), num_modes,
-    mvy.data(), stride, &beta, xdoty.data(), stride);
-  cublasSgemv(
-    ma_handle, CUBLAS_OP_N, num_modes, num_participating, &alpha, eigz.data(), num_modes,
-    mvz.data(), stride, &beta, xdotz.data(), stride);
+  gpublasSgemv(
+    ma_handle,
+    GPUBLAS_OP_N,
+    num_modes,
+    num_participating,
+    &alpha,
+    eigx.data(),
+    num_modes,
+    mvx.data(),
+    stride,
+    &beta,
+    xdotx.data(),
+    stride);
+  gpublasSgemv(
+    ma_handle,
+    GPUBLAS_OP_N,
+    num_modes,
+    num_participating,
+    &alpha,
+    eigy.data(),
+    num_modes,
+    mvy.data(),
+    stride,
+    &beta,
+    xdoty.data(),
+    stride);
+  gpublasSgemv(
+    ma_handle,
+    GPUBLAS_OP_N,
+    num_modes,
+    num_participating,
+    &alpha,
+    eigz.data(),
+    num_modes,
+    mvz.data(),
+    stride,
+    &beta,
+    xdotz.data(),
+    stride);
 
   // Calculate intermediate value
   // (i.e. heat current without modal velocities)
-  cublasSgemm(
-    ma_handle, CUBLAS_OP_N, CUBLAS_OP_N, num_modes, 3, num_participating, &alpha, eigx.data(),
-    num_modes, smx.data(), num_participating, &beta, jmx.data(), num_modes);
-  cublasSgemm(
-    ma_handle, CUBLAS_OP_N, CUBLAS_OP_N, num_modes, 3, num_participating, &alpha, eigy.data(),
-    num_modes, smy.data(), num_participating, &beta, jmy.data(), num_modes);
-  cublasSgemm(
-    ma_handle, CUBLAS_OP_N, CUBLAS_OP_N, num_modes, 3, num_participating, &alpha, eigz.data(),
-    num_modes, smz.data(), num_participating, &beta, jmz.data(), num_modes);
+  gpublasSgemm(
+    ma_handle,
+    GPUBLAS_OP_N,
+    GPUBLAS_OP_N,
+    num_modes,
+    3,
+    num_participating,
+    &alpha,
+    eigx.data(),
+    num_modes,
+    smx.data(),
+    num_participating,
+    &beta,
+    jmx.data(),
+    num_modes);
+  gpublasSgemm(
+    ma_handle,
+    GPUBLAS_OP_N,
+    GPUBLAS_OP_N,
+    num_modes,
+    3,
+    num_participating,
+    &alpha,
+    eigy.data(),
+    num_modes,
+    smy.data(),
+    num_participating,
+    &beta,
+    jmy.data(),
+    num_modes);
+  gpublasSgemm(
+    ma_handle,
+    GPUBLAS_OP_N,
+    GPUBLAS_OP_N,
+    num_modes,
+    3,
+    num_participating,
+    &alpha,
+    eigz.data(),
+    num_modes,
+    smz.data(),
+    num_participating,
+    &beta,
+    jmz.data(),
+    num_modes);
 
   // calculate modal heat current
-  cublasSdgmm(
-    ma_handle, CUBLAS_SIDE_LEFT, num_modes, 3, jmx.data(), num_modes, xdotx.data(), stride,
-    jmx.data(), num_modes);
-  cublasSdgmm(
-    ma_handle, CUBLAS_SIDE_LEFT, num_modes, 3, jmy.data(), num_modes, xdoty.data(), stride,
-    jmy.data(), num_modes);
-  cublasSdgmm(
-    ma_handle, CUBLAS_SIDE_LEFT, num_modes, 3, jmz.data(), num_modes, xdotz.data(), stride,
-    jmz.data(), num_modes);
+  gpublasSdgmm(
+    ma_handle,
+    GPUBLAS_SIDE_LEFT,
+    num_modes,
+    3,
+    jmx.data(),
+    num_modes,
+    xdotx.data(),
+    stride,
+    jmx.data(),
+    num_modes);
+  gpublasSdgmm(
+    ma_handle,
+    GPUBLAS_SIDE_LEFT,
+    num_modes,
+    3,
+    jmy.data(),
+    num_modes,
+    xdoty.data(),
+    stride,
+    jmy.data(),
+    num_modes);
+  gpublasSdgmm(
+    ma_handle,
+    GPUBLAS_SIDE_LEFT,
+    num_modes,
+    3,
+    jmz.data(),
+    num_modes,
+    xdotz.data(),
+    stride,
+    jmz.data(),
+    num_modes);
 
   // Prepare modal heat current for jxi, jxo, jyi, jyo, jz format
   grid_size = (num_modes - 1) / BLOCK_SIZE + 1;
@@ -304,7 +411,7 @@ void MODAL_ANALYSIS::compute_heat(
     gpu_update_jm<ACCUMULATE>
       <<<grid_size, BLOCK_SIZE>>>(num_modes, jmx.data(), jmy.data(), jmz.data(), jm.data());
   }
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
 }
 
 void MODAL_ANALYSIS::setN(const std::vector<int>& cpu_type_size)
@@ -437,9 +544,9 @@ void MODAL_ANALYSIS::preprocess(
   rsqrtmass.resize(num_participating, Memory_Type::managed);
   gpu_set_mass_terms<<<(num_participating - 1) / BLOCK_SIZE + 1, BLOCK_SIZE>>>(
     num_participating, N1, mass.data(), sqrtmass.data(), rsqrtmass.data());
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
 
-  cublasCreate(&ma_handle);
+  gpublasCreate(&ma_handle);
 }
 
 void MODAL_ANALYSIS::process(
@@ -462,23 +569,28 @@ void MODAL_ANALYSIS::process(
 
   gpu_bin_modes<<<num_bins, BIN_BLOCK>>>(
     num_modes, bin_count.data(), bin_sum.data(), num_bins, jm.data(), bin_out.data());
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
 
   if (method == HNEMA_METHOD) {
     float factor = KAPPA_UNIT_CONVERSION / (volume * temperature * fe * (float)samples_per_output);
     int num_bins_stored = num_bins * NUM_OF_HEAT_COMPONENTS;
     gpu_scale_jm<<<(num_bins_stored - 1) / BLOCK_SIZE + 1, BLOCK_SIZE>>>(
       num_bins_stored, factor, bin_out.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   }
 
   // Compute thermal conductivity and output
-  cudaDeviceSynchronize(); // ensure GPU ready to move data to CPU
+  gpuDeviceSynchronize(); // ensure GPU ready to move data to CPU
   FILE* fid = fopen(output_file_position, "a");
   for (int i = 0; i < num_bins; i++) {
     fprintf(
-      fid, "%g %g %g %g %g\n", bin_out[i], bin_out[i + num_bins], bin_out[i + 2 * num_bins],
-      bin_out[i + 3 * num_bins], bin_out[i + 4 * num_bins]);
+      fid,
+      "%g %g %g %g %g\n",
+      bin_out[i],
+      bin_out[i + num_bins],
+      bin_out[i + 2 * num_bins],
+      bin_out[i + 3 * num_bins],
+      bin_out[i + 4 * num_bins]);
   }
   fflush(fid);
   fclose(fid);
@@ -486,7 +598,7 @@ void MODAL_ANALYSIS::process(
   if (method == HNEMA_METHOD) {
     int grid_size = (num_heat_stored - 1) / BLOCK_SIZE + 1;
     gpu_reset_data<<<grid_size, BLOCK_SIZE>>>(num_heat_stored, jm.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   }
 }
 
@@ -494,5 +606,5 @@ void MODAL_ANALYSIS::postprocess()
 {
   if (!compute)
     return;
-  cublasDestroy(ma_handle);
+  gpublasDestroy(ma_handle);
 }

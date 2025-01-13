@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,15 +19,20 @@ The driver class calculating force and related quantities.
 #include "fcp.cuh"
 #include "force.cuh"
 #include "lj.cuh"
-#include "nep3.cuh"
-#include "nep3_multigpu.cuh"
+#include "nep.cuh"
+#include "nep_multigpu.cuh"
 #include "potential.cuh"
 #include "tersoff1988.cuh"
 #include "tersoff1989.cuh"
 #include "tersoff_mini.cuh"
+#include "ilp_tmd_sw.cuh"
+#include "ilp_nep_gr_hbn.cuh"
+#include "ilp_nep_tmd.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -66,7 +71,7 @@ void Force::parse_potential(
 
   std::unique_ptr<Potential> potential;
   FILE* fid_potential = my_fopen(param[1], "r");
-  char potential_name[20];
+  char potential_name[100];
   int count = fscanf(fid_potential, "%s", potential_name);
   if (count != 1) {
     PRINT_INPUT_ERROR("reading error for potential file.");
@@ -89,16 +94,27 @@ void Force::parse_potential(
     potential.reset(new FCP(fid_potential, num_types, number_of_atoms, box));
     is_fcp = true;
   } else if (
-    strcmp(potential_name, "nep") == 0 || strcmp(potential_name, "nep_zbl") == 0 ||
-    strcmp(potential_name, "nep3") == 0 || strcmp(potential_name, "nep3_zbl") == 0 ||
-    strcmp(potential_name, "nep4") == 0 || strcmp(potential_name, "nep4_zbl") == 0) {
+    strcmp(potential_name, "nep5") == 0 || 
+    strcmp(potential_name, "nep5_zbl") == 0 ||
+    strcmp(potential_name, "nep3") == 0 ||
+    strcmp(potential_name, "nep3_zbl") == 0 || 
+    strcmp(potential_name, "nep4") == 0 ||
+    strcmp(potential_name, "nep4_zbl") == 0 || 
+    strcmp(potential_name, "nep3_dipole") == 0 ||
+    strcmp(potential_name, "nep3_polarizability") == 0 ||
+    strcmp(potential_name, "nep4_dipole") == 0 ||
+    strcmp(potential_name, "nep4_polarizability") == 0 ||
+    strcmp(potential_name, "nep3_temperature") == 0 ||
+    strcmp(potential_name, "nep3_zbl_temperature") == 0 ||
+    strcmp(potential_name, "nep4_temperature") == 0 ||
+    strcmp(potential_name, "nep4_zbl_temperature") == 0) {
     int num_gpus;
-    CHECK(cudaGetDeviceCount(&num_gpus));
+    CHECK(gpuGetDeviceCount(&num_gpus));
 #ifdef ZHEYONG
     num_gpus = 3;
 #endif
     if (num_gpus == 1) {
-      potential.reset(new NEP3(param[1], number_of_atoms));
+      potential.reset(new NEP(param[1], number_of_atoms));
     } else {
       int partition_direction = -1;
       if (num_param == 3) {
@@ -112,13 +128,30 @@ void Force::parse_potential(
           PRINT_INPUT_ERROR("partition direction for multi-GPU NEP can only be x or y or z.\n");
         }
       }
-      potential.reset(new NEP3_MULTIGPU(num_gpus, param[1], number_of_atoms, partition_direction));
+      potential.reset(new NEP_MULTIGPU(num_gpus, param[1], number_of_atoms, partition_direction));
     }
     is_nep = true;
     // Check if the types for this potential are compatible with the possibly other potentials
     check_types(param[1]);
   } else if (strcmp(potential_name, "lj") == 0) {
     potential.reset(new LJ(fid_potential, num_types, number_of_atoms));
+  } else if (strcmp(potential_name, "ilp_nep_gr_hbn") == 0) {
+    if (num_param != 3) {
+      PRINT_INPUT_ERROR("potential should contain ILP potential file and NEP potential file.\n");
+    }
+    potential.reset(new ILP_NEP_GR_HBN(fid_potential, param[2], num_types, number_of_atoms));
+  } else if (strcmp(potential_name, "ilp_nep_tmd") == 0) {
+    if (num_param != 3) {
+      PRINT_INPUT_ERROR("potential should contain ILP potential file and NEP potential file.\n");
+    }
+    potential.reset(new ILP_NEP_TMD(fid_potential, param[2], num_types, number_of_atoms));
+  } else if (strcmp(potential_name, "ilp_tmd_sw") == 0) {
+    if (num_param != 3) {
+      PRINT_INPUT_ERROR("potential should contain ILP potential file and SW potential file.\n");
+    }
+    FILE* fid_sw = my_fopen(param[2], "r");
+    potential.reset(new ILP_TMD_SW(fid_potential, fid_sw, num_types, number_of_atoms));
+    fclose(fid_sw);
   } else {
     PRINT_INPUT_ERROR("illegal potential model.\n");
   }
@@ -206,18 +239,12 @@ static __global__ void gpu_sum_force(int N, double* g_fx, double* g_fy, double* 
   s_f[tid] = f;
   __syncthreads();
 
-#pragma unroll
-  for (int offset = blockDim.x >> 1; offset > 32; offset >>= 1) {
+
+  for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
     if (tid < offset) {
       s_f[tid] += s_f[tid + offset];
     }
     __syncthreads();
-  }
-  for (int offset = 32; offset > 0; offset >>= 1) {
-    if (tid < offset) {
-      s_f[tid] += s_f[tid + offset];
-    }
-    __syncwarp();
   }
 
   if (tid == 0) {
@@ -343,63 +370,36 @@ static __global__ void gpu_apply_pbc(int N, Box box, double* g_x, double* g_y, d
 {
   int n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n < N) {
-    if (box.triclinic == 0) {
-      double lx = box.cpu_h[0];
-      double ly = box.cpu_h[1];
-      double lz = box.cpu_h[2];
-      if (box.pbc_x == 1) {
-        if (g_x[n] < 0) {
-          g_x[n] += lx;
-        } else if (g_x[n] > lx) {
-          g_x[n] -= lx;
-        }
+    double x = g_x[n];
+    double y = g_y[n];
+    double z = g_z[n];
+    double sx = box.cpu_h[9] * x + box.cpu_h[10] * y + box.cpu_h[11] * z;
+    double sy = box.cpu_h[12] * x + box.cpu_h[13] * y + box.cpu_h[14] * z;
+    double sz = box.cpu_h[15] * x + box.cpu_h[16] * y + box.cpu_h[17] * z;
+    if (box.pbc_x == 1) {
+      if (sx < 0.0) {
+        sx += 1.0;
+      } else if (sx > 1.0) {
+        sx -= 1.0;
       }
-      if (box.pbc_y == 1) {
-        if (g_y[n] < 0) {
-          g_y[n] += ly;
-        } else if (g_y[n] > ly) {
-          g_y[n] -= ly;
-        }
-      }
-      if (box.pbc_z == 1) {
-        if (g_z[n] < 0) {
-          g_z[n] += lz;
-        } else if (g_z[n] > lz) {
-          g_z[n] -= lz;
-        }
-      }
-    } else {
-      double x = g_x[n];
-      double y = g_y[n];
-      double z = g_z[n];
-      double sx = box.cpu_h[9] * x + box.cpu_h[10] * y + box.cpu_h[11] * z;
-      double sy = box.cpu_h[12] * x + box.cpu_h[13] * y + box.cpu_h[14] * z;
-      double sz = box.cpu_h[15] * x + box.cpu_h[16] * y + box.cpu_h[17] * z;
-      if (box.pbc_x == 1) {
-        if (sx < 0.0) {
-          sx += 1.0;
-        } else if (sx > 1.0) {
-          sx -= 1.0;
-        }
-      }
-      if (box.pbc_y == 1) {
-        if (sy < 0.0) {
-          sy += 1.0;
-        } else if (sy > 1.0) {
-          sy -= 1.0;
-        }
-      }
-      if (box.pbc_z == 1) {
-        if (sz < 0.0) {
-          sz += 1.0;
-        } else if (sz > 1.0) {
-          sz -= 1.0;
-        }
-      }
-      g_x[n] = box.cpu_h[0] * sx + box.cpu_h[1] * sy + box.cpu_h[2] * sz;
-      g_y[n] = box.cpu_h[3] * sx + box.cpu_h[4] * sy + box.cpu_h[5] * sz;
-      g_z[n] = box.cpu_h[6] * sx + box.cpu_h[7] * sy + box.cpu_h[8] * sz;
     }
+    if (box.pbc_y == 1) {
+      if (sy < 0.0) {
+        sy += 1.0;
+      } else if (sy > 1.0) {
+        sy -= 1.0;
+      }
+    }
+    if (box.pbc_z == 1) {
+      if (sz < 0.0) {
+        sz += 1.0;
+      } else if (sz > 1.0) {
+        sz -= 1.0;
+      }
+    }
+    g_x[n] = box.cpu_h[0] * sx + box.cpu_h[1] * sy + box.cpu_h[2] * sz;
+    g_y[n] = box.cpu_h[3] * sx + box.cpu_h[4] * sy + box.cpu_h[5] * sz;
+    g_z[n] = box.cpu_h[6] * sx + box.cpu_h[7] * sy + box.cpu_h[8] * sz;
   }
 }
 
@@ -438,31 +438,71 @@ void Force::compute(
   const int number_of_atoms = type.size();
   if (!is_fcp) {
     gpu_apply_pbc<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, box, position_per_atom.data(), position_per_atom.data() + number_of_atoms,
+      number_of_atoms,
+      box,
+      position_per_atom.data(),
+      position_per_atom.data() + number_of_atoms,
       position_per_atom.data() + number_of_atoms * 2);
   }
 
   initialize_properties<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-    number_of_atoms, force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-    force_per_atom.data() + number_of_atoms * 2, potential_per_atom.data(), virial_per_atom.data());
-  CUDA_CHECK_KERNEL
+    number_of_atoms,
+    force_per_atom.data(),
+    force_per_atom.data() + number_of_atoms,
+    force_per_atom.data() + number_of_atoms * 2,
+    potential_per_atom.data(),
+    virial_per_atom.data());
+  GPU_CHECK_KERNEL
 
   if (multiple_potentials_mode_.compare("observe") == 0) {
     // If observing, calculate using main potential only
-    potentials[0]->compute(
-      box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    if (3 == potentials[0]->nep_model_type) {
+      potentials[0]->compute(
+        temperature,
+        box,
+        type,
+        position_per_atom,
+        potential_per_atom,
+        force_per_atom,
+        virial_per_atom);
+    } else if (1 == potentials[0]->ilp_flag) {
+      // compute the potential with ILP
+      potentials[0]->compute_ilp(
+        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom, group);
+    } else {
+      potentials[0]->compute(
+        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    }
   } else if (multiple_potentials_mode_.compare("average") == 0) {
     // Calculate average potential, force and virial per atom.
     for (int i = 0; i < potentials.size(); i++) {
       // potential->compute automatically adds the properties
-      potentials[i]->compute(
-        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+      if (3 == potentials[i]->nep_model_type) {
+        potentials[i]->compute(
+          temperature,
+          box,
+          type,
+          position_per_atom,
+          potential_per_atom,
+          force_per_atom,
+          virial_per_atom);
+      } else if (1 == potentials[i]->ilp_flag) {
+        // compute the potential with ILP
+        potentials[i]->compute_ilp(
+          box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom, group);
+      } else {
+        potentials[i]->compute(
+          box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+      }
     }
     // Compute average and copy properties back into original vectors.
     gpu_average_properties<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, potential_per_atom.data(), force_per_atom.data(), virial_per_atom.data(),
+      number_of_atoms,
+      potential_per_atom.data(),
+      force_per_atom.data(),
+      virial_per_atom.data(),
       (double)potentials.size());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   } else {
     PRINT_INPUT_ERROR("Invalid mode for multiple potentials.\n");
   }
@@ -473,26 +513,41 @@ void Force::compute(
     // yx yy yz    6 1 5
     // zx zy zz    7 8 2
     gpu_add_driving_force<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, hnemd_fe_[0], hnemd_fe_[1], hnemd_fe_[2],
-      virial_per_atom.data() + 0 * number_of_atoms, virial_per_atom.data() + 3 * number_of_atoms,
-      virial_per_atom.data() + 4 * number_of_atoms, virial_per_atom.data() + 6 * number_of_atoms,
-      virial_per_atom.data() + 1 * number_of_atoms, virial_per_atom.data() + 5 * number_of_atoms,
-      virial_per_atom.data() + 7 * number_of_atoms, virial_per_atom.data() + 8 * number_of_atoms,
-      virial_per_atom.data() + 2 * number_of_atoms, force_per_atom.data(),
-      force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms);
+      number_of_atoms,
+      hnemd_fe_[0],
+      hnemd_fe_[1],
+      hnemd_fe_[2],
+      virial_per_atom.data() + 0 * number_of_atoms,
+      virial_per_atom.data() + 3 * number_of_atoms,
+      virial_per_atom.data() + 4 * number_of_atoms,
+      virial_per_atom.data() + 6 * number_of_atoms,
+      virial_per_atom.data() + 1 * number_of_atoms,
+      virial_per_atom.data() + 5 * number_of_atoms,
+      virial_per_atom.data() + 7 * number_of_atoms,
+      virial_per_atom.data() + 8 * number_of_atoms,
+      virial_per_atom.data() + 2 * number_of_atoms,
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms);
 
     GPU_Vector<double> ftot(3); // total force vector of the system
 
     gpu_sum_force<<<3, 1024>>>(
-      number_of_atoms, force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-      force_per_atom.data() + 2 * number_of_atoms, ftot.data());
-    CUDA_CHECK_KERNEL
+      number_of_atoms,
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms,
+      ftot.data());
+    GPU_CHECK_KERNEL
 
     gpu_correct_force<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, 1.0 / number_of_atoms, force_per_atom.data(),
-      force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms,
+      number_of_atoms,
+      1.0 / number_of_atoms,
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms,
       ftot.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   }
 
   // always correct the force when using the FCP potential
@@ -500,15 +555,21 @@ void Force::compute(
     if (!compute_hnemd_) {
       GPU_Vector<double> ftot(3); // total force vector of the system
       gpu_sum_force<<<3, 1024>>>(
-        number_of_atoms, force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-        force_per_atom.data() + 2 * number_of_atoms, ftot.data());
-      CUDA_CHECK_KERNEL
+        number_of_atoms,
+        force_per_atom.data(),
+        force_per_atom.data() + number_of_atoms,
+        force_per_atom.data() + 2 * number_of_atoms,
+        ftot.data());
+      GPU_CHECK_KERNEL
 
       gpu_correct_force<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-        number_of_atoms, 1.0 / number_of_atoms, force_per_atom.data(),
-        force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms,
+        number_of_atoms,
+        1.0 / number_of_atoms,
+        force_per_atom.data(),
+        force_per_atom.data() + number_of_atoms,
+        force_per_atom.data() + 2 * number_of_atoms,
         ftot.data());
-      CUDA_CHECK_KERNEL
+      GPU_CHECK_KERNEL
     }
   }
 }
@@ -572,18 +633,12 @@ static __global__ void gpu_sum_tensor(int N, double* g_tensor, double* g_sum_ten
   s_t[tid] = t;
   __syncthreads();
 
-#pragma unroll
-  for (int offset = blockDim.x >> 1; offset > 32; offset >>= 1) {
+
+  for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
     if (tid < offset) {
       s_t[tid] += s_t[tid + offset];
     }
     __syncthreads();
-  }
-  for (int offset = 32; offset > 0; offset >>= 1) {
-    if (tid < offset) {
-      s_t[tid] += s_t[tid + offset];
-    }
-    __syncwarp();
   }
 
   if (tid == 0) {
@@ -671,31 +726,72 @@ void Force::compute(
   const int number_of_atoms = type.size();
   if (!is_fcp) {
     gpu_apply_pbc<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, box, position_per_atom.data(), position_per_atom.data() + number_of_atoms,
+      number_of_atoms,
+      box,
+      position_per_atom.data(),
+      position_per_atom.data() + number_of_atoms,
       position_per_atom.data() + number_of_atoms * 2);
   }
 
   initialize_properties<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-    number_of_atoms, force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-    force_per_atom.data() + number_of_atoms * 2, potential_per_atom.data(), virial_per_atom.data());
-  CUDA_CHECK_KERNEL
+    number_of_atoms,
+    force_per_atom.data(),
+    force_per_atom.data() + number_of_atoms,
+    force_per_atom.data() + number_of_atoms * 2,
+    potential_per_atom.data(),
+    virial_per_atom.data());
+  GPU_CHECK_KERNEL
 
+  temperature += delta_T;
   if (multiple_potentials_mode_.compare("observe") == 0) {
     // If observing, calculate using main potential only
-    potentials[0]->compute(
-      box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    if (3 == potentials[0]->nep_model_type) {
+      potentials[0]->compute(
+        temperature,
+        box,
+        type,
+        position_per_atom,
+        potential_per_atom,
+        force_per_atom,
+        virial_per_atom);
+    } else if (1 == potentials[0]->ilp_flag) {
+      // compute the potential with ILP
+      potentials[0]->compute_ilp(
+        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom, group);
+    } else {
+      potentials[0]->compute(
+        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    }
   } else if (multiple_potentials_mode_.compare("average") == 0) {
     // Calculate average potential, force and virial per atom.
     for (int i = 0; i < potentials.size(); i++) {
       // potential->compute automatically adds the properties
-      potentials[i]->compute(
-        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+      if (3 == potentials[i]->nep_model_type) {
+        potentials[i]->compute(
+          temperature,
+          box,
+          type,
+          position_per_atom,
+          potential_per_atom,
+          force_per_atom,
+          virial_per_atom);
+      } else if (1 == potentials[i]->ilp_flag) {
+        // compute the potential with ILP
+        potentials[i]->compute_ilp(
+          box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom, group);
+      } else {
+        potentials[i]->compute(
+          box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+      }
     }
     // Compute average and copy properties back into original vectors.
     gpu_average_properties<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, potential_per_atom.data(), force_per_atom.data(), virial_per_atom.data(),
+      number_of_atoms,
+      potential_per_atom.data(),
+      force_per_atom.data(),
+      virial_per_atom.data(),
       (double)potentials.size());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   } else {
     PRINT_INPUT_ERROR("Invalid mode for multiple potentials.\n");
   }
@@ -706,26 +802,41 @@ void Force::compute(
     // yx yy yz    6 1 5
     // zx zy zz    7 8 2
     gpu_add_driving_force<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, hnemd_fe_[0], hnemd_fe_[1], hnemd_fe_[2],
-      virial_per_atom.data() + 0 * number_of_atoms, virial_per_atom.data() + 3 * number_of_atoms,
-      virial_per_atom.data() + 4 * number_of_atoms, virial_per_atom.data() + 6 * number_of_atoms,
-      virial_per_atom.data() + 1 * number_of_atoms, virial_per_atom.data() + 5 * number_of_atoms,
-      virial_per_atom.data() + 7 * number_of_atoms, virial_per_atom.data() + 8 * number_of_atoms,
-      virial_per_atom.data() + 2 * number_of_atoms, force_per_atom.data(),
-      force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms);
+      number_of_atoms,
+      hnemd_fe_[0],
+      hnemd_fe_[1],
+      hnemd_fe_[2],
+      virial_per_atom.data() + 0 * number_of_atoms,
+      virial_per_atom.data() + 3 * number_of_atoms,
+      virial_per_atom.data() + 4 * number_of_atoms,
+      virial_per_atom.data() + 6 * number_of_atoms,
+      virial_per_atom.data() + 1 * number_of_atoms,
+      virial_per_atom.data() + 5 * number_of_atoms,
+      virial_per_atom.data() + 7 * number_of_atoms,
+      virial_per_atom.data() + 8 * number_of_atoms,
+      virial_per_atom.data() + 2 * number_of_atoms,
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms);
 
     GPU_Vector<double> ftot(3); // total force vector of the system
 
     gpu_sum_force<<<3, 1024>>>(
-      number_of_atoms, force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-      force_per_atom.data() + 2 * number_of_atoms, ftot.data());
-    CUDA_CHECK_KERNEL
+      number_of_atoms,
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms,
+      ftot.data());
+    GPU_CHECK_KERNEL
 
     gpu_correct_force<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, 1.0 / number_of_atoms, force_per_atom.data(),
-      force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms,
+      number_of_atoms,
+      1.0 / number_of_atoms,
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms,
       ftot.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   } else if (compute_hnemdec_ == 0) {
     // the tensor:
     // xx xy xz    0 3 4
@@ -735,32 +846,59 @@ void Force::compute(
     GPU_Vector<double> tensor_tot(9);
 
     gpu_find_per_atom_tensor<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, mass_per_atom.data(), potential_per_atom.data(), velocity_per_atom.data(),
-      velocity_per_atom.data() + number_of_atoms, velocity_per_atom.data() + 2 * number_of_atoms,
-      virial_per_atom.data() + 0 * number_of_atoms, virial_per_atom.data() + 3 * number_of_atoms,
-      virial_per_atom.data() + 4 * number_of_atoms, virial_per_atom.data() + 6 * number_of_atoms,
-      virial_per_atom.data() + 1 * number_of_atoms, virial_per_atom.data() + 5 * number_of_atoms,
-      virial_per_atom.data() + 7 * number_of_atoms, virial_per_atom.data() + 8 * number_of_atoms,
-      virial_per_atom.data() + 2 * number_of_atoms, tensor_per_atom.data());
-    CUDA_CHECK_KERNEL
+      number_of_atoms,
+      mass_per_atom.data(),
+      potential_per_atom.data(),
+      velocity_per_atom.data(),
+      velocity_per_atom.data() + number_of_atoms,
+      velocity_per_atom.data() + 2 * number_of_atoms,
+      virial_per_atom.data() + 0 * number_of_atoms,
+      virial_per_atom.data() + 3 * number_of_atoms,
+      virial_per_atom.data() + 4 * number_of_atoms,
+      virial_per_atom.data() + 6 * number_of_atoms,
+      virial_per_atom.data() + 1 * number_of_atoms,
+      virial_per_atom.data() + 5 * number_of_atoms,
+      virial_per_atom.data() + 7 * number_of_atoms,
+      virial_per_atom.data() + 8 * number_of_atoms,
+      virial_per_atom.data() + 2 * number_of_atoms,
+      tensor_per_atom.data());
+    GPU_CHECK_KERNEL
 
     gpu_sum_tensor<<<9, 1024>>>(number_of_atoms, tensor_per_atom.data(), tensor_tot.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
 
     gpu_add_driving_force<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, coefficient.data(), type.data(), hnemd_fe_[0], hnemd_fe_[1], hnemd_fe_[2],
-      tensor_per_atom.data() + 0 * number_of_atoms, tensor_per_atom.data() + 3 * number_of_atoms,
-      tensor_per_atom.data() + 4 * number_of_atoms, tensor_per_atom.data() + 6 * number_of_atoms,
-      tensor_per_atom.data() + 1 * number_of_atoms, tensor_per_atom.data() + 5 * number_of_atoms,
-      tensor_per_atom.data() + 7 * number_of_atoms, tensor_per_atom.data() + 8 * number_of_atoms,
-      tensor_per_atom.data() + 2 * number_of_atoms, tensor_tot.data(), force_per_atom.data(),
-      force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms);
-    CUDA_CHECK_KERNEL
+      number_of_atoms,
+      coefficient.data(),
+      type.data(),
+      hnemd_fe_[0],
+      hnemd_fe_[1],
+      hnemd_fe_[2],
+      tensor_per_atom.data() + 0 * number_of_atoms,
+      tensor_per_atom.data() + 3 * number_of_atoms,
+      tensor_per_atom.data() + 4 * number_of_atoms,
+      tensor_per_atom.data() + 6 * number_of_atoms,
+      tensor_per_atom.data() + 1 * number_of_atoms,
+      tensor_per_atom.data() + 5 * number_of_atoms,
+      tensor_per_atom.data() + 7 * number_of_atoms,
+      tensor_per_atom.data() + 8 * number_of_atoms,
+      tensor_per_atom.data() + 2 * number_of_atoms,
+      tensor_tot.data(),
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms);
+    GPU_CHECK_KERNEL
 
   } else if (compute_hnemdec_ != -1) {
     gpu_add_driving_force<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, coefficient.data(), type.data(), hnemd_fe_[0], hnemd_fe_[1], hnemd_fe_[2],
-      force_per_atom.data(), force_per_atom.data() + number_of_atoms,
+      number_of_atoms,
+      coefficient.data(),
+      type.data(),
+      hnemd_fe_[0],
+      hnemd_fe_[1],
+      hnemd_fe_[2],
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
       force_per_atom.data() + 2 * number_of_atoms);
   }
 
@@ -769,15 +907,21 @@ void Force::compute(
     if (!compute_hnemd_) {
       GPU_Vector<double> ftot(3); // total force vector of the system
       gpu_sum_force<<<3, 1024>>>(
-        number_of_atoms, force_per_atom.data(), force_per_atom.data() + number_of_atoms,
-        force_per_atom.data() + 2 * number_of_atoms, ftot.data());
-      CUDA_CHECK_KERNEL
+        number_of_atoms,
+        force_per_atom.data(),
+        force_per_atom.data() + number_of_atoms,
+        force_per_atom.data() + 2 * number_of_atoms,
+        ftot.data());
+      GPU_CHECK_KERNEL
 
       gpu_correct_force<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-        number_of_atoms, 1.0 / number_of_atoms, force_per_atom.data(),
-        force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms,
+        number_of_atoms,
+        1.0 / number_of_atoms,
+        force_per_atom.data(),
+        force_per_atom.data() + number_of_atoms,
+        force_per_atom.data() + 2 * number_of_atoms,
         ftot.data());
-      CUDA_CHECK_KERNEL
+      GPU_CHECK_KERNEL
     }
   }
 }

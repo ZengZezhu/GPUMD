@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,7 +23,9 @@ Use finite difference to calculate the seconod order force constants：
 #include "model/box.cuh"
 #include "model/group.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include <vector>
+#include <cstring>
 
 static __global__ void gpu_shift_atom(const double dx, double* x) { x[0] += dx; }
 
@@ -34,13 +36,13 @@ static void shift_atom(
 
   if (beta == 0) {
     gpu_shift_atom<<<1, 1>>>(dx, position_per_atom.data() + n2);
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   } else if (beta == 1) {
     gpu_shift_atom<<<1, 1>>>(dx, position_per_atom.data() + number_of_atoms + n2);
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   } else {
     gpu_shift_atom<<<1, 1>>>(dx, position_per_atom.data() + number_of_atoms * 2 + n2);
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   }
 }
 
@@ -67,10 +69,10 @@ static void get_f(
     box, position_per_atom, type, group, potential_per_atom, force_per_atom, virial_per_atom);
 
   size_t M = sizeof(double);
-  CHECK(cudaMemcpy(f + 0, force_per_atom.data() + n1, M, cudaMemcpyDeviceToHost));
-  CHECK(cudaMemcpy(f + 1, force_per_atom.data() + n1 + number_of_atoms, M, cudaMemcpyDeviceToHost));
+  CHECK(gpuMemcpy(f + 0, force_per_atom.data() + n1, M, gpuMemcpyDeviceToHost));
+  CHECK(gpuMemcpy(f + 1, force_per_atom.data() + n1 + number_of_atoms, M, gpuMemcpyDeviceToHost));
   CHECK(
-    cudaMemcpy(f + 2, force_per_atom.data() + n1 + number_of_atoms * 2, M, cudaMemcpyDeviceToHost));
+    gpuMemcpy(f + 2, force_per_atom.data() + n1 + number_of_atoms * 2, M, gpuMemcpyDeviceToHost));
 
   shift_atom(-dx, n2, beta, position_per_atom);
 }
@@ -94,12 +96,34 @@ void find_H12(
   double f_negative[3];
   for (size_t beta = 0; beta < 3; ++beta) {
     get_f(
-      -displacement, n1, n2, beta, box, position_per_atom, type, group, potential_per_atom,
-      force_per_atom, virial_per_atom, force, f_negative);
+      -displacement,
+      n1,
+      n2,
+      beta,
+      box,
+      position_per_atom,
+      type,
+      group,
+      potential_per_atom,
+      force_per_atom,
+      virial_per_atom,
+      force,
+      f_negative);
 
     get_f(
-      displacement, n1, n2, beta, box, position_per_atom, type, group, potential_per_atom,
-      force_per_atom, virial_per_atom, force, f_positive);
+      displacement,
+      n1,
+      n2,
+      beta,
+      box,
+      position_per_atom,
+      type,
+      group,
+      potential_per_atom,
+      force_per_atom,
+      virial_per_atom,
+      force,
+      f_positive);
 
     for (size_t alpha = 0; alpha < 3; ++alpha) {
       size_t index = alpha * 3 + beta;

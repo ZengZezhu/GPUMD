@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,10 +21,13 @@ If DEBUG is on in the makefile, the velocities are the same from run to run.
 If DEBUG is off, the velocities are different in different runs.
 ------------------------------------------------------------------------------*/
 
+#include "model/group.cuh"
 #include "utilities/common.cuh"
 #include "utilities/gpu_vector.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "velocity.cuh"
 #include <vector>
+#include <cstring>
 
 void Velocity::scale(
   const double initial_temperature,
@@ -53,6 +56,19 @@ static void get_random_velocities(const int N, double* vx, double* vy, double* v
   for (int n = 0; n < N; ++n) {
     vx[n] = -1.0 + (rand() * 2.0) / RAND_MAX;
     vy[n] = -1.0 + (rand() * 2.0) / RAND_MAX;
+    vz[n] = -1.0 + (rand() * 2.0) / RAND_MAX;
+  }
+}
+
+static void get_random_velocities_by_seed(const int N, double* vx, double* vy, double* vz, int seed)
+{
+  unsigned int s = (unsigned int)seed;
+  for (int n = 0; n < N; ++n) {
+    srand(s + n * 3);
+    vx[n] = -1.0 + (rand() * 2.0) / RAND_MAX;
+    srand(s + n * 3 + 1);
+    vy[n] = -1.0 + (rand() * 2.0) / RAND_MAX;
+    srand(s + n * 3 + 2);
     vz[n] = -1.0 + (rand() * 2.0) / RAND_MAX;
   }
 }
@@ -198,23 +214,42 @@ void Velocity::correct_velocity(
   const int N = cpu_mass.size();
 
   zero_linear_momentum(
-    N, cpu_mass.data(), cpu_velocity_per_atom.data(), cpu_velocity_per_atom.data() + N,
+    N,
+    cpu_mass.data(),
+    cpu_velocity_per_atom.data(),
+    cpu_velocity_per_atom.data() + N,
     cpu_velocity_per_atom.data() + N * 2);
 
   double r0[3] = {0, 0, 0}; // center of mass position
   get_center(
-    N, r0, cpu_mass.data(), cpu_position_per_atom.data(), cpu_position_per_atom.data() + N,
+    N,
+    r0,
+    cpu_mass.data(),
+    cpu_position_per_atom.data(),
+    cpu_position_per_atom.data() + N,
     cpu_position_per_atom.data() + N * 2);
 
   double L[3] = {0, 0, 0}; // angular momentum
   get_angular_momentum(
-    N, L, r0, cpu_mass.data(), cpu_position_per_atom.data(), cpu_position_per_atom.data() + N,
-    cpu_position_per_atom.data() + N * 2, cpu_velocity_per_atom.data(),
-    cpu_velocity_per_atom.data() + N, cpu_velocity_per_atom.data() + N * 2);
+    N,
+    L,
+    r0,
+    cpu_mass.data(),
+    cpu_position_per_atom.data(),
+    cpu_position_per_atom.data() + N,
+    cpu_position_per_atom.data() + N * 2,
+    cpu_velocity_per_atom.data(),
+    cpu_velocity_per_atom.data() + N,
+    cpu_velocity_per_atom.data() + N * 2);
 
   double I[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}; // moment of inertia
   get_inertia(
-    N, I, r0, cpu_mass.data(), cpu_position_per_atom.data(), cpu_position_per_atom.data() + N,
+    N,
+    I,
+    r0,
+    cpu_mass.data(),
+    cpu_position_per_atom.data(),
+    cpu_position_per_atom.data() + N,
     cpu_position_per_atom.data() + N * 2);
 
   double w[3]; // angular velocity
@@ -224,13 +259,20 @@ void Velocity::correct_velocity(
   }
 
   zero_angular_momentum(
-    N, w, r0, cpu_position_per_atom.data(), cpu_position_per_atom.data() + N,
-    cpu_position_per_atom.data() + N * 2, cpu_velocity_per_atom.data(),
-    cpu_velocity_per_atom.data() + N, cpu_velocity_per_atom.data() + N * 2);
+    N,
+    w,
+    r0,
+    cpu_position_per_atom.data(),
+    cpu_position_per_atom.data() + N,
+    cpu_position_per_atom.data() + N * 2,
+    cpu_velocity_per_atom.data(),
+    cpu_velocity_per_atom.data() + N,
+    cpu_velocity_per_atom.data() + N * 2);
 }
 
 void Velocity::correct_velocity(
   const int step,
+  const std::vector<Group>& group,
   const std::vector<double>& cpu_mass,
   GPU_Vector<double>& position_per_atom,
   std::vector<double>& cpu_position_per_atom,
@@ -238,10 +280,35 @@ void Velocity::correct_velocity(
   GPU_Vector<double>& velocity_per_atom)
 {
   if (do_velocity_correction) {
-    if ((step + 1) % velocity_correction_interval == 0) {
+    if (step % velocity_correction_interval == 0) {
       position_per_atom.copy_to_host(cpu_position_per_atom.data());
       velocity_per_atom.copy_to_host(cpu_velocity_per_atom.data());
-      correct_velocity(cpu_mass, cpu_position_per_atom, cpu_velocity_per_atom);
+      if (velocity_correction_group_method < 0) {
+        correct_velocity(cpu_mass, cpu_position_per_atom, cpu_velocity_per_atom);
+      } else {
+        for (int g = 0; g < group[velocity_correction_group_method].number; ++g) {
+          int cpu_size = group[velocity_correction_group_method].cpu_size[g];
+          int cpu_size_sum = group[velocity_correction_group_method].cpu_size_sum[g];
+          std::vector<double> mass(cpu_size);
+          std::vector<double> position(cpu_size * 3);
+          std::vector<double> velocity(cpu_size * 3);
+          for (int m = 0; m < cpu_size; ++m) {
+            int n = group[velocity_correction_group_method].cpu_contents[cpu_size_sum + m];
+            mass[m] = cpu_mass[n];
+            for (int d = 0; d < 3; ++d) {
+              position[m + d * cpu_size] = cpu_position_per_atom[n + d * cpu_mass.size()];
+              velocity[m + d * cpu_size] = cpu_velocity_per_atom[n + d * cpu_mass.size()];
+            }
+          }
+          correct_velocity(mass, position, velocity);
+          for (int m = 0; m < cpu_size; ++m) {
+            int n = group[velocity_correction_group_method].cpu_contents[cpu_size_sum + m];
+            for (int d = 0; d < 3; ++d) {
+              cpu_velocity_per_atom[n + d * cpu_mass.size()] = velocity[m + d * cpu_size];
+            }
+          }
+        }
+      }
       velocity_per_atom.copy_from_host(cpu_velocity_per_atom.data());
     }
   }
@@ -253,23 +320,41 @@ void Velocity::initialize(
   const std::vector<double>& cpu_mass,
   const std::vector<double>& cpu_position_per_atom,
   std::vector<double>& cpu_velocity_per_atom,
-  GPU_Vector<double>& velocity_per_atom)
+  GPU_Vector<double>& velocity_per_atom,
+  bool use_seed,
+  int seed)
 {
   do_velocity_correction = false;
   if (!has_velocity_in_xyz) {
     const int N = cpu_mass.size();
-    get_random_velocities(
-      N, cpu_velocity_per_atom.data(), cpu_velocity_per_atom.data() + N,
-      cpu_velocity_per_atom.data() + N * 2);
+    if (use_seed) {
+      get_random_velocities_by_seed(
+        N,
+        cpu_velocity_per_atom.data(),
+        cpu_velocity_per_atom.data() + N,
+        cpu_velocity_per_atom.data() + N * 2,
+        seed);
+    } else {
+      get_random_velocities(
+        N,
+        cpu_velocity_per_atom.data(),
+        cpu_velocity_per_atom.data() + N,
+        cpu_velocity_per_atom.data() + N * 2);
+    }
     correct_velocity(cpu_mass, cpu_position_per_atom, cpu_velocity_per_atom);
     scale(
-      initial_temperature, cpu_mass, cpu_velocity_per_atom.data(), cpu_velocity_per_atom.data() + N,
+      initial_temperature,
+      cpu_mass,
+      cpu_velocity_per_atom.data(),
+      cpu_velocity_per_atom.data() + N,
       cpu_velocity_per_atom.data() + N * 2);
   }
 
   velocity_per_atom.copy_from_host(cpu_velocity_per_atom.data());
-
-  printf("Initialized velocities with T = %g K.\n", initial_temperature);
 }
 
-void Velocity::finalize() { do_velocity_correction = false; }
+void Velocity::finalize()
+{
+  do_velocity_correction = false;
+  velocity_correction_group_method = -1;
+}

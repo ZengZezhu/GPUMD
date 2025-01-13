@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 class Ensemble_NVE : public Ensemble
 {
 public:
-  Ensemble_NVE(int, int);
+  Ensemble_NVE(int);
   virtual ~Ensemble_NVE(void);
 
   virtual void compute1(

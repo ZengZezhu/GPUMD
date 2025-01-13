@@ -24,14 +24,10 @@ before_script:
 
 build:linux:
   extends: .build
-  tags:
-    - linux
 
 #------------------- test stage -------------------
 
 .documentation:
-  tags:
-    - linux
   needs:
     - build:linux
   artifacts:
@@ -44,6 +40,7 @@ build:linux:
     # --------------------------
     # DEVELOPMENT VERSION
     - git checkout master
+    - git pull
     - tag=$(git describe --tags | tail -1)
     - echo "tag= $tag"
     # build user guide

@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,7 +22,9 @@ Dump force data to a file at a given interval.
 #include "parse_utilities.cuh"
 #include "utilities/error.cuh"
 #include "utilities/gpu_vector.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 #include <vector>
 
 void Dump_Force::parse(const char** param, int num_param, const std::vector<Group>& groups)
@@ -100,7 +102,10 @@ void Dump_Force::process(
     force_per_atom.copy_to_host(cpu_force_per_atom.data());
     for (int n = 0; n < number_of_atoms; n++) {
       fprintf(
-        fid_, "%g %g %g\n", cpu_force_per_atom[n], cpu_force_per_atom[n + number_of_atoms],
+        fid_,
+        "%25.15e%25.15e%25.15e\n",
+        cpu_force_per_atom[n],
+        cpu_force_per_atom[n + number_of_atoms],
         cpu_force_per_atom[n + 2 * number_of_atoms]);
     }
   } else {
@@ -108,18 +113,26 @@ void Dump_Force::process(
     const int group_size_sum = groups[grouping_method_].cpu_size_sum[group_id_];
 
     copy_force<<<(group_size - 1) / 128 + 1, 128>>>(
-      group_size, group_size_sum, groups[grouping_method_].contents.data(), force_per_atom.data(),
-      force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms,
-      gpu_force_tmp.data(), gpu_force_tmp.data() + group_size,
+      group_size,
+      group_size_sum,
+      groups[grouping_method_].contents.data(),
+      force_per_atom.data(),
+      force_per_atom.data() + number_of_atoms,
+      force_per_atom.data() + 2 * number_of_atoms,
+      gpu_force_tmp.data(),
+      gpu_force_tmp.data() + group_size,
       gpu_force_tmp.data() + group_size * 2);
     for (int d = 0; d < 3; ++d) {
       double* cpu_f = cpu_force_per_atom.data() + group_size * d;
       double* gpu_f = gpu_force_tmp.data() + group_size * d;
-      CHECK(cudaMemcpy(cpu_f, gpu_f, sizeof(double) * group_size, cudaMemcpyDeviceToHost));
+      CHECK(gpuMemcpy(cpu_f, gpu_f, sizeof(double) * group_size, gpuMemcpyDeviceToHost));
     }
     for (int n = 0; n < group_size; n++) {
       fprintf(
-        fid_, "%g %g %g\n", cpu_force_per_atom[n], cpu_force_per_atom[n + group_size],
+        fid_,
+        "%25.15e%25.15e%25.15e\n",
+        cpu_force_per_atom[n],
+        cpu_force_per_atom[n + group_size],
         cpu_force_per_atom[n + 2 * group_size]);
     }
   }

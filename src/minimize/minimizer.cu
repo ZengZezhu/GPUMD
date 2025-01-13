@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,6 +18,8 @@ The abstract base class (ABC) for the minimizer classes.
 ------------------------------------------------------------------------------*/
 
 #include "minimizer.cuh"
+#include "utilities/gpu_macro.cuh"
+#include <cstring>
 
 namespace
 {
@@ -109,7 +111,10 @@ void Minimizer::calculate_total_potential(const GPU_Vector<double>& potential_pe
   const int size = potential_per_atom.size();
   const int number_of_rounds = (size - 1) / 1024 + 1;
   gpu_calculate_total_potential<<<1, 1024>>>(
-    size, number_of_rounds, potential_per_atom.data(), potential_per_atom_temp_.data(),
+    size,
+    number_of_rounds,
+    potential_per_atom.data(),
+    potential_per_atom_temp_.data(),
     total_potential_.data());
 
   total_potential_.copy_to_host(cpu_total_potential_.data());

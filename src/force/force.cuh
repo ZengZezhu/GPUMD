@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -67,7 +67,8 @@ public:
   bool compute_hnemd_ = false;
   int compute_hnemdec_ = -1;
   double hnemd_fe_[3];
-  double temperature;
+  double temperature = 0;
+  double delta_T;
   GPU_Vector<double> coefficient;
   std::vector<std::unique_ptr<Potential>> potentials;
 

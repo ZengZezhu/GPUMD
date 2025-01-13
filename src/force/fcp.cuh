@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@ struct FCP_Data {
 class FCP : public Potential
 {
 public:
+  using Potential::compute;
   FCP(FILE* fid, const int num_types, const int N, const Box& box);
   virtual ~FCP(void);
   virtual void compute(

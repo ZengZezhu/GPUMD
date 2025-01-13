@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,15 +17,17 @@ Run active learning on-the-fly during MD
 --------------------------------------------------------------------------------------------------*/
 
 #include "active.cuh"
-#include "model/box.cuh"
-#include "model/atom.cuh"
 #include "force/force.cuh"
+#include "model/atom.cuh"
+#include "model/box.cuh"
 #include "parse_utilities.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
 #include <iostream>
 #include <vector>
+#include <cstring>
 
 static __global__ void gpu_sum(const int N, const double* g_data, double* g_data_sum)
 {
@@ -145,7 +147,8 @@ void Active::parse(const char** param, int num_param)
   }
 
   printf(
-    "    will check if uncertainties exceed %f every %d iterations.\n", threshold_,
+    "    will check if uncertainties exceed %f every %d iterations.\n",
+    threshold_,
     check_interval_);
 }
 
@@ -192,31 +195,42 @@ void Active::process(
   // Reset mean vectors to zero
   initialize_mean_vectors<<<(3 * number_of_atoms - 1) / 128 + 1, 128>>>(
     number_of_atoms, mean_force_.data(), mean_force_sq_.data());
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
 
   // Loop backwards over files to evaluate the main potential last, keeping it's properties intact
   for (int potential_index = number_of_potentials - 1; potential_index >= 0; potential_index--) {
     // Set potential/force/virials to zero
     initialize_properties<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, atom.force_per_atom.data(), atom.force_per_atom.data() + number_of_atoms,
-      atom.force_per_atom.data() + number_of_atoms * 2, atom.potential_per_atom.data(),
+      number_of_atoms,
+      atom.force_per_atom.data(),
+      atom.force_per_atom.data() + number_of_atoms,
+      atom.force_per_atom.data() + number_of_atoms * 2,
+      atom.potential_per_atom.data(),
       atom.virial_per_atom.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
     // Compute new potential properties
     force.potentials[potential_index]->compute(
-      box, atom.type, atom.position_per_atom, atom.potential_per_atom, atom.force_per_atom,
+      box,
+      atom.type,
+      atom.position_per_atom,
+      atom.potential_per_atom,
+      atom.force_per_atom,
       atom.virial_per_atom);
     // Write properties to GPU vector
     compute_mean<<<(3 * number_of_atoms - 1) / 128 + 1, 128>>>(
-      number_of_atoms, number_of_potentials, mean_force_.data(), mean_force_sq_.data(),
-      atom.force_per_atom.data(), atom.force_per_atom.data() + number_of_atoms,
+      number_of_atoms,
+      number_of_potentials,
+      mean_force_.data(),
+      mean_force_sq_.data(),
+      atom.force_per_atom.data(),
+      atom.force_per_atom.data() + number_of_atoms,
       atom.force_per_atom.data() + number_of_atoms * 2);
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   }
   // Sum mean and mean_sq on GPU, move sum to CPU
   compute_uncertainty<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
     number_of_atoms, mean_force_.data(), mean_force_sq_.data(), gpu_uncertainty_.data());
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
   gpu_uncertainty_.copy_to_host(cpu_uncertainty_.data());
   double uncertainty = -1.0;
   for (int i = 0; i < number_of_atoms; i++) {
@@ -227,9 +241,19 @@ void Active::process(
   write_uncertainty(step, global_time, uncertainty);
   if (uncertainty > threshold_) {
     write_exyz(
-      step, global_time, box, atom.cpu_atom_symbol, atom.cpu_type, atom.position_per_atom,
-      atom.cpu_position_per_atom, atom.velocity_per_atom, atom.cpu_velocity_per_atom,
-      atom.force_per_atom, atom.virial_per_atom, thermo, uncertainty);
+      step,
+      global_time,
+      box,
+      atom.cpu_atom_symbol,
+      atom.cpu_type,
+      atom.position_per_atom,
+      atom.cpu_position_per_atom,
+      atom.velocity_per_atom,
+      atom.cpu_velocity_per_atom,
+      atom.force_per_atom,
+      atom.virial_per_atom,
+      thermo,
+      uncertainty);
   }
 }
 
@@ -267,16 +291,18 @@ void Active::output_line2(
   fprintf(fid_, " uncertainty=%.8f", uncertainty);
 
   // box
-  if (box.triclinic == 0) {
-    fprintf(
-      fid_, " Lattice=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"", box.cpu_h[0], 0.0, 0.0,
-      0.0, box.cpu_h[1], 0.0, 0.0, 0.0, box.cpu_h[2]);
-  } else {
-    fprintf(
-      fid_, " Lattice=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"", box.cpu_h[0], box.cpu_h[3],
-      box.cpu_h[6], box.cpu_h[1], box.cpu_h[4], box.cpu_h[7], box.cpu_h[2], box.cpu_h[5],
-      box.cpu_h[8]);
-  }
+  fprintf(
+    fid_,
+    " Lattice=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"",
+    box.cpu_h[0],
+    box.cpu_h[3],
+    box.cpu_h[6],
+    box.cpu_h[1],
+    box.cpu_h[4],
+    box.cpu_h[7],
+    box.cpu_h[2],
+    box.cpu_h[5],
+    box.cpu_h[8]);
 
   // energy and virial (symmetric tensor) in eV, and stress (symmetric tensor) in eV/A^3
   double cpu_thermo[8];
@@ -287,12 +313,28 @@ void Active::output_line2(
 
   fprintf(fid_, " energy=%.8f", cpu_thermo[1]);
   fprintf(
-    fid_, " virial=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"", cpu_total_virial_[0],
-    cpu_total_virial_[3], cpu_total_virial_[4], cpu_total_virial_[3], cpu_total_virial_[1],
-    cpu_total_virial_[5], cpu_total_virial_[4], cpu_total_virial_[5], cpu_total_virial_[2]);
+    fid_,
+    " virial=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"",
+    cpu_total_virial_[0],
+    cpu_total_virial_[3],
+    cpu_total_virial_[4],
+    cpu_total_virial_[3],
+    cpu_total_virial_[1],
+    cpu_total_virial_[5],
+    cpu_total_virial_[4],
+    cpu_total_virial_[5],
+    cpu_total_virial_[2]);
   fprintf(
-    fid_, " stress=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"", cpu_thermo[2], cpu_thermo[5],
-    cpu_thermo[6], cpu_thermo[5], cpu_thermo[3], cpu_thermo[7], cpu_thermo[6], cpu_thermo[7],
+    fid_,
+    " stress=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"",
+    cpu_thermo[2],
+    cpu_thermo[5],
+    cpu_thermo[6],
+    cpu_thermo[5],
+    cpu_thermo[3],
+    cpu_thermo[7],
+    cpu_thermo[6],
+    cpu_thermo[7],
     cpu_thermo[4]);
 
   // Properties

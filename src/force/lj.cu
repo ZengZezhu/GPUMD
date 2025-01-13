@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,6 +20,8 @@ The class dealing with the Lennard-Jones (LJ) pairwise potentials.
 #include "lj.cuh"
 #include "neighbor.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
+#include <cstring>
 
 // best block size here: 128
 #define BLOCK_SIZE_FORCE 128
@@ -201,18 +203,37 @@ void LJ::compute(
   if (num_calls++ == 0) {
 #endif
     find_neighbor(
-      N1, N2, rc, box, type, position_per_atom, lj_data.cell_count, lj_data.cell_count_sum,
-      lj_data.cell_contents, lj_data.NN,
+      N1,
+      N2,
+      rc,
+      box,
+      type,
+      position_per_atom,
+      lj_data.cell_count,
+      lj_data.cell_count_sum,
+      lj_data.cell_contents,
+      lj_data.NN,
       lj_data.NL); // TODO: generalize
 #ifdef USE_FIXED_NEIGHBOR
   }
 #endif
 
   gpu_find_force<<<grid_size, BLOCK_SIZE_FORCE>>>(
-    lj_para, number_of_atoms, N1, N2, box, lj_data.NN.data(), lj_data.NL.data(), type.data(),
-    position_per_atom.data(), position_per_atom.data() + number_of_atoms,
-    position_per_atom.data() + number_of_atoms * 2, force_per_atom.data(),
-    force_per_atom.data() + number_of_atoms, force_per_atom.data() + 2 * number_of_atoms,
-    virial_per_atom.data(), potential_per_atom.data());
-  CUDA_CHECK_KERNEL
+    lj_para,
+    number_of_atoms,
+    N1,
+    N2,
+    box,
+    lj_data.NN.data(),
+    lj_data.NL.data(),
+    type.data(),
+    position_per_atom.data(),
+    position_per_atom.data() + number_of_atoms,
+    position_per_atom.data() + number_of_atoms * 2,
+    force_per_atom.data(),
+    force_per_atom.data() + number_of_atoms,
+    force_per_atom.data() + 2 * number_of_atoms,
+    virial_per_atom.data(),
+    potential_per_atom.data());
+  GPU_CHECK_KERNEL
 }

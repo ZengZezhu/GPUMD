@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,12 +21,13 @@ Oxford University Press, 2010.
 
 #include "ensemble_nhc.cuh"
 #include "utilities/common.cuh"
+#include "utilities/gpu_macro.cuh"
+#include <cstring>
 #define DIM 3
 
-Ensemble_NHC::Ensemble_NHC(int t, int fg, int mg, double* mv, int N, double T, double Tc, double dt)
+Ensemble_NHC::Ensemble_NHC(int t, int mg, double* mv, int N, double T, double Tc, double dt)
 {
   type = t;
-  fixed_group = fg;
   move_group = mg;
   move_velocity[0] = mv[0];
   move_velocity[1] = mv[1];
@@ -49,7 +50,6 @@ Ensemble_NHC::Ensemble_NHC(int t, int fg, int mg, double* mv, int N, double T, d
 
 Ensemble_NHC::Ensemble_NHC(
   int t,
-  int fg,
   int source_input,
   int sink_input,
   int N1,
@@ -60,7 +60,6 @@ Ensemble_NHC::Ensemble_NHC(
   double time_step)
 {
   type = t;
-  fixed_group = fg;
   temperature = T;
   temperature_coupling = Tc;
   delta_temperature = dT;
@@ -111,8 +110,14 @@ static double nhc(
   // These constants are taken from Tuckerman's book
   int n_sy = 7;
   int n_respa = 4;
-  const double w[7] = {0.784513610477560, 0.235573213359357, -1.17767998417887, 1.31518632068391,
-                       -1.17767998417887, 0.235573213359357, 0.784513610477560};
+  const double w[7] = {
+    0.784513610477560,
+    0.235573213359357,
+    -1.17767998417887,
+    1.31518632068391,
+    -1.17767998417887,
+    0.235573213359357,
+    0.784513610477560};
 
   double factor = 1.0; // to be accumulated
 
@@ -328,11 +333,23 @@ void Ensemble_NHC::compute1(
 {
   if (type == 2) {
     integrate_nvt_nhc_1(
-      time_step, box.get_volume(), group, atom.mass, atom.potential_per_atom, atom.force_per_atom,
-      atom.virial_per_atom, atom.position_per_atom, atom.velocity_per_atom, thermo);
+      time_step,
+      box.get_volume(),
+      group,
+      atom.mass,
+      atom.potential_per_atom,
+      atom.force_per_atom,
+      atom.virial_per_atom,
+      atom.position_per_atom,
+      atom.velocity_per_atom,
+      thermo);
   } else {
     integrate_heat_nhc_1(
-      time_step, group, atom.mass, atom.force_per_atom, atom.position_per_atom,
+      time_step,
+      group,
+      atom.mass,
+      atom.force_per_atom,
+      atom.position_per_atom,
       atom.velocity_per_atom);
   }
 }
@@ -346,11 +363,23 @@ void Ensemble_NHC::compute2(
 {
   if (type == 2) {
     integrate_nvt_nhc_2(
-      time_step, box.get_volume(), group, atom.mass, atom.potential_per_atom, atom.force_per_atom,
-      atom.virial_per_atom, atom.position_per_atom, atom.velocity_per_atom, thermo);
+      time_step,
+      box.get_volume(),
+      group,
+      atom.mass,
+      atom.potential_per_atom,
+      atom.force_per_atom,
+      atom.virial_per_atom,
+      atom.position_per_atom,
+      atom.velocity_per_atom,
+      thermo);
   } else {
     integrate_heat_nhc_2(
-      time_step, group, atom.mass, atom.force_per_atom, atom.position_per_atom,
+      time_step,
+      group,
+      atom.mass,
+      atom.force_per_atom,
+      atom.position_per_atom,
       atom.velocity_per_atom);
   }
 }

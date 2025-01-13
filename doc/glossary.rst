@@ -41,14 +41,29 @@ Glossary
    HNEMD
         :ref:`The homogeneous non-equilibrium molecular dynamics <hnemd>`
 
+   HNEMDEC
+        :ref:`homogeneous non-equilibrium molecular dynamics Evans-Cummings algorithm <hnemdec>`
+
    LJ
         :ref:`Lennard-Jones <lennard_jones_potential>` potential
+
+   LSQT
+        linear-scaling quantum transport
+
+   MC
+        Monte Carlo
 
    MD
         molecular dynamics
 
    MSD
         mean square displacement
+
+   MSST
+        :ref:`Multi-scale shock technique <msst>` [Reed2003]_
+
+   MTTK
+        :ref:`Martyna-Tuckerman-Tobias-Klein integrator <mttk>` [Martyna1994]_
 
    NEMD
         :ref:`non-equilibrium molecular dynamics <nemd>`
@@ -65,8 +80,17 @@ Glossary
    PDOS
         phonon density of states
 
+   PIMD
+        path-integral molecular dynamics
+
+   RDF
+        radial distribution function
+
    RMSE
         `root-mean-square error <https://en.wikipedia.org/wiki/Root-mean-square_deviation>`_
+
+   RPMD
+        ring-polymer molecular dynamics
 
    RTC
         :ref:`running thermal conductivity <running_thermal_conductivity>`
@@ -77,6 +101,9 @@ Glossary
    SDC
         self-diffusion coefficient
 
+   SGC
+        semi-grand canonical
+
    SHC
         spectral heat current
 
@@ -86,8 +113,14 @@ Glossary
    SVR
         :ref:`stochastic velocity rescaling thermostat <svr_thermostat>` [Bussi2007b]_
 
+   TRPMD
+        thermostatted ring-polymer molecular dynamics
+
    VAC
         velocity auto-correlation
+
+   VCSGC
+        variance-constrained semi-grand canonical [Sadigh2012a]_ [Sadigh2012b]_
 
    ZBL
         universal potential by Ziegler, Biersack, and Littmark [Ziegler1985]_

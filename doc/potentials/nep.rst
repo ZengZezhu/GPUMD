@@ -6,9 +6,9 @@ Neuroevolution potential
 ************************
 
 The neuroevolution potential (:term:`NEP`) approach was proposed in [Fan2021]_ (NEP1) and later improved in [Fan2022a]_ (NEP2) and [Fan2022b]_ (NEP3).
-Currently, :program:`GPUMD` supports NEP2, NEP3 and NEP4 (to be published).
+Currently, :program:`GPUMD` supports NEP3, NEP4 (to be published), and NEP5 (to be published).
 All versions have comparable accuracy for single-component systems.
-For multi-component systems, NEP2 has the lowest accuracy, and NEP4 has the highest, if all the other hyperparameters are the same.
+For multi-component systems, NEP4 and NEP5 usually have higher accuracy, if all the other hyperparameters are the same.
 
 :program:`GPUMD` not only allows one to carry out simulations using :term:`NEP` models via the :ref:`gpumd executable <gpumd_executable>` but even the construction of such models via the :ref:`nep executable <nep_executable>`.
 
@@ -64,10 +64,10 @@ where
    A^i_{nlm} = \sum_{j\neq i} g_n(r_{ij}) Y_{lm}(\theta_{ij},\phi_{ij}),
 
 and :math:`Y_{lm}(\theta_{ij},\phi_{ij})` are the spherical harmonics as a function of the polar angle :math:`\theta_{ij}` and the azimuthal angle :math:`\phi_{ij}`.
-For expressions of he 4-body and 5-body descriptor components, we refer to [Fan2022b]_.
+For expressions of the 4-body and 5-body descriptor components, we refer to [Fan2022b]_.
 
 The radial functions :math:`g_n(r_{ij})` appear in both the radial and the angular descriptor components.
-For NEP3 [Fan2022b]_, in the radial descriptor components,
+In the radial descriptor components,
 
 .. math::
    
@@ -93,7 +93,6 @@ and
    0, & r_{ij} > r_\mathrm{c}^\mathrm{R}.
    \end{cases}
 
-For NEP2, the trainable parameters :math:`c^{ij}_{nk}` reduce to :math:`c^{ij}_{n}\delta_{nk}`.
 In the angular descriptor components, :math:`g_n(r_{ij})` have similar forms but with :math:`N_\mathrm{bas}^\mathrm{R}` changed to :math:`N_\mathrm{bas}^\mathrm{A}` and with :math:`r_\mathrm{c}^\mathrm{R}` changed to :math:`r_\mathrm{c}^\mathrm{A}`.
 
 Model dimensions
@@ -117,15 +116,15 @@ Model dimensions
    * - 5-body angular descriptor components
      - :math:`(n_\mathrm{max}^\mathrm{A}+1)` or zero (if not used)
    * - descriptor components
-     - :math:`N_\mathrm{des}` is the sum of the above numbers
+     - :math:`N_\mathrm{des}` is the sum of the above numbers of descriptor components
    * - trainable parameters :math:`c_{nk}^{ij}` in the descriptor
-     - :math:`N_\mathrm{typ}^2 [(n_\mathrm{max}^\mathrm{R}+1)+(n_\mathrm{max}^\mathrm{A}+1)]` (NEP2)
-   * -
-     - :math:`N_\mathrm{typ}^2 [(n_\mathrm{max}^\mathrm{R}+1)(N_\mathrm{bas}^\mathrm{R}+1)+(n_\mathrm{max}^\mathrm{A}+1)(N_\mathrm{bas}^\mathrm{A}+1)]` (NEP3, NEP4)
+     - :math:`N_\mathrm{typ}^2 [(n_\mathrm{max}^\mathrm{R}+1)(N_\mathrm{bas}^\mathrm{R}+1)+(n_\mathrm{max}^\mathrm{A}+1)(N_\mathrm{bas}^\mathrm{A}+1)]`
    * - trainable :term:`NN` parameters
-     - :math:`N_\mathrm{nn} = (N_\mathrm{des} +2) N_\mathrm{neu}+1` (NEP2, NEP3)
+     - :math:`N_\mathrm{nn} = (N_\mathrm{des} +2) N_\mathrm{neu}+1` (NEP3)
    * -
      - :math:`N_\mathrm{nn} = (N_\mathrm{des} +2) N_\mathrm{neu} N_\mathrm{typ}+1` (NEP4)
+   * -
+     - :math:`N_\mathrm{nn} = ((N_\mathrm{des} +2) N_\mathrm{neu} + 1) N_\mathrm{typ}+1` (NEP5)
 
 The total number of trainable parameters is the sum of the number of trainable descriptor parameters and the number of :term:`NN` parameters :math:`N_\mathrm{nn}`.
 

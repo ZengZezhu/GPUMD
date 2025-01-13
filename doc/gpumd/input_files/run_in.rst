@@ -57,6 +57,10 @@ Simulation setup
      - Set up the interaction model
      - Yes
      - N/A
+   * - :ref:`dftd3 <kw_dftd3>`
+     - Add the DFT-D3 dispersion correction to the NEP model
+     - Yes
+     - N/A
    * - :ref:`change_box <kw_change_box>`
      - Change the box
      - Yes
@@ -126,6 +130,10 @@ Actions
      - No
    * - :ref:`compute_hnemd <kw_compute_hnemd>`
      - Compute the thermal conductivity using the :term:`HNEMD` method
+     - No
+     - No
+   * - :ref:`compute_hnemdec <kw_compute_hnemdec>`
+     - Compute the multicomponent system thermal conductivity using the :term:`HNEMDEC` method
      - No
      - No
    * - :ref:`compute_phonon <kw_compute_phonon>`

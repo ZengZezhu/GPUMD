@@ -11,15 +11,32 @@ Below you can find a listing of keywords for the ``run.in`` input file.
    :maxdepth: 1
    :caption: Setup
 
+   replicate
    velocity
    correct_velocity
    potential
+   dftd3
    change_box
    deform
    ensemble
+   ensemble_standard
+   ensemble_mttk
+   ensemble_heat
+   ensemble_pimd
+   ensemble_ti_spring
+   ensemble_ti_as
+   ensemble_ti_rs
+   ensemble_ti
+   ensemble_shock_nemd
+   ensemble_msst
+   ensemble_nphug
    fix
    time_step
    plumed
+   mc
+   electron_stop
+   add_force
+   add_efield
 
 .. toctree::
    :maxdepth: 1
@@ -35,11 +52,14 @@ Below you can find a listing of keywords for the ``run.in`` input file.
    compute_hac
    compute_hnema
    compute_hnemd
+   compute_hnemdec
    compute_phonon
    compute_sdc
    compute_msd
    compute_shc
    compute_viscosity
+   compute_lsqt
+   compute_rdf
 
 .. toctree::
    :maxdepth: 1
@@ -47,10 +67,14 @@ Below you can find a listing of keywords for the ``run.in`` input file.
    
    active
    dump_exyz
+   dump_beads
    dump_observer
+   dump_dipole
+   dump_polarizability
    dump_force
    dump_netcdf
    dump_position
    dump_restart
    dump_thermo
    dump_velocity
+   dump_shock_nemd

@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -15,13 +15,13 @@
 
 #pragma once
 
-#include "utilities/gpu_vector.cuh"
 #include "force/force.cuh"
-#include "model/atom.cuh"
 #include "integrate/integrate.cuh"
+#include "model/atom.cuh"
 #include "model/group.cuh"
-#include <vector>
+#include "utilities/gpu_vector.cuh"
 #include <string>
+#include <vector>
 class Box;
 class Atom;
 class Force;
@@ -31,10 +31,7 @@ class Dump_Observer
 {
 public:
   void parse(const char** param, int num_param);
-  void preprocess(
-      const int number_of_atoms, 
-      const int number_of_files, 
-      Force& force);
+  void preprocess(const int number_of_atoms, const int number_of_files, Force& force);
   void process(
     int step,
     const double global_time,

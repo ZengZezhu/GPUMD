@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,7 +21,9 @@ The Bussi-Donadio-Parrinello thermostat:
 #include "ensemble_bdp.cuh"
 #include "svr_utilities.cuh"
 #include "utilities/common.cuh"
+#include "utilities/gpu_macro.cuh"
 #include <chrono>
+#include <cstring>
 #define DIM 3
 
 void Ensemble_BDP::initialize_rng()
@@ -33,10 +35,9 @@ void Ensemble_BDP::initialize_rng()
 #endif
 };
 
-Ensemble_BDP::Ensemble_BDP(int t, int fg, int mg, double* mv, double T, double Tc)
+Ensemble_BDP::Ensemble_BDP(int t, int mg, double* mv, double T, double Tc)
 {
   type = t;
-  fixed_group = fg;
   move_group = mg;
   move_velocity[0] = mv[0];
   move_velocity[1] = mv[1];
@@ -46,11 +47,9 @@ Ensemble_BDP::Ensemble_BDP(int t, int fg, int mg, double* mv, double T, double T
   initialize_rng();
 }
 
-Ensemble_BDP::Ensemble_BDP(
-  int t, int fg, int source_input, int sink_input, double T, double Tc, double dT)
+Ensemble_BDP::Ensemble_BDP(int t, int source_input, int sink_input, double T, double Tc, double dT)
 {
   type = t;
-  fixed_group = fg;
   temperature = T;
   temperature_coupling = Tc;
   delta_temperature = dT;
@@ -157,7 +156,12 @@ void Ensemble_BDP::compute1(
   GPU_Vector<double>& thermo)
 {
   velocity_verlet(
-    true, time_step, group, atom.mass, atom.force_per_atom, atom.position_per_atom,
+    true,
+    time_step,
+    group,
+    atom.mass,
+    atom.force_per_atom,
+    atom.position_per_atom,
     atom.velocity_per_atom);
 }
 
@@ -170,11 +174,23 @@ void Ensemble_BDP::compute2(
 {
   if (type == 4) {
     integrate_nvt_bdp_2(
-      time_step, box.get_volume(), group, atom.mass, atom.potential_per_atom, atom.force_per_atom,
-      atom.virial_per_atom, atom.position_per_atom, atom.velocity_per_atom, thermo);
+      time_step,
+      box.get_volume(),
+      group,
+      atom.mass,
+      atom.potential_per_atom,
+      atom.force_per_atom,
+      atom.virial_per_atom,
+      atom.position_per_atom,
+      atom.velocity_per_atom,
+      thermo);
   } else {
     integrate_heat_bdp_2(
-      time_step, group, atom.mass, atom.force_per_atom, atom.position_per_atom,
+      time_step,
+      group,
+      atom.mass,
+      atom.force_per_atom,
+      atom.position_per_atom,
       atom.velocity_per_atom);
   }
 }

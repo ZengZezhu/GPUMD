@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,22 +20,27 @@ The driver class dealing with measurement.
 #include "measure.cuh"
 #include "model/atom.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 #define NUM_OF_HEAT_COMPONENTS 5
 
 void Measure::initialize(
   const int number_of_steps,
   const double time_step,
-  Box& box,
+  Integrate& integrate,
   std::vector<Group>& group,
   Atom& atom,
+  Box& box,
   Force& force)
 {
   const int number_of_atoms = atom.mass.size();
   const int number_of_potentials = force.potentials.size();
+  lsqt.preprocess(atom, number_of_steps, time_step);
   dos.preprocess(time_step, group, atom.mass);
   sdc.preprocess(number_of_atoms, time_step, group);
   msd.preprocess(number_of_atoms, time_step, group);
+  rdf.preprocess(integrate.type >= 31, atom.number_of_beads, number_of_atoms, atom.cpu_type_size);
   hac.preprocess(number_of_steps);
   viscosity.preprocess(number_of_steps);
   shc.preprocess(number_of_atoms, group);
@@ -49,7 +54,11 @@ void Measure::initialize(
   dump_thermo.preprocess();
   dump_force.preprocess(number_of_atoms, group);
   dump_exyz.preprocess(number_of_atoms);
+  dump_beads.preprocess(number_of_atoms, atom.number_of_beads);
   dump_observer.preprocess(number_of_atoms, number_of_potentials, force);
+  dump_shock_nemd.preprocess(atom, box);
+  dump_dipole.preprocess(number_of_atoms, number_of_potentials, force);
+  dump_polarizability.preprocess(number_of_atoms, number_of_potentials, force);
   active.preprocess(number_of_atoms, number_of_potentials, force);
 #ifdef USE_NETCDF
   dump_netcdf.preprocess(number_of_atoms);
@@ -60,7 +69,14 @@ void Measure::initialize(
 }
 
 void Measure::finalize(
-  const int number_of_steps, const double time_step, const double temperature, const double volume)
+  Atom& atom,
+  Box& box,
+  Integrate& integrate,
+  const int number_of_steps,
+  const double time_step,
+  const double temperature,
+  const double volume,
+  const double number_of_beads)
 {
   dump_position.postprocess();
   dump_velocity.postprocess();
@@ -68,11 +84,16 @@ void Measure::finalize(
   dump_thermo.postprocess();
   dump_force.postprocess();
   dump_exyz.postprocess();
+  dump_beads.postprocess();
   dump_observer.postprocess();
+  dump_shock_nemd.postprocess();
+  dump_dipole.postprocess();
+  dump_polarizability.postprocess();
   active.postprocess();
   dos.postprocess();
   sdc.postprocess();
   msd.postprocess();
+  rdf.postprocess(integrate.type >= 31, number_of_beads);
   hac.postprocess(number_of_steps, temperature, time_step, volume);
   viscosity.postprocess(number_of_steps, temperature, time_step, volume);
   shc.postprocess(time_step);
@@ -110,45 +131,92 @@ void Measure::process(
   int number_of_atoms_fixed = (fixed_group < 0) ? 0 : group[0].cpu_size[fixed_group];
   number_of_atoms_fixed += (move_group < 0) ? 0 : group[0].cpu_size[move_group];
   dump_thermo.process(
-    integrate.type == 31, integrate.temperature, step, number_of_atoms, number_of_atoms_fixed, box,
+    integrate.type >= 31,
+    integrate.ensemble->temperature,
+    step,
+    number_of_atoms,
+    number_of_atoms_fixed,
+    box,
     thermo);
   dump_position.process(
-    step, box, group, atom.cpu_atom_symbol, atom.cpu_type, atom.position_per_atom,
+    step,
+    box,
+    group,
+    atom.cpu_atom_symbol,
+    atom.cpu_type,
+    atom.position_per_atom,
     atom.cpu_position_per_atom);
   dump_velocity.process(step, group, atom.velocity_per_atom, atom.cpu_velocity_per_atom);
   dump_restart.process(
-    step, box, group, atom.cpu_atom_symbol, atom.cpu_type, atom.cpu_mass, atom.position_per_atom,
-    atom.velocity_per_atom, atom.cpu_position_per_atom, atom.cpu_velocity_per_atom);
+    step,
+    box,
+    group,
+    atom.cpu_atom_symbol,
+    atom.cpu_type,
+    atom.cpu_mass,
+    atom.position_per_atom,
+    atom.velocity_per_atom,
+    atom.cpu_position_per_atom,
+    atom.cpu_velocity_per_atom);
   dump_force.process(step, group, atom.force_per_atom);
-  dump_exyz.process(
-    step, global_time, box, atom.cpu_atom_symbol, atom.cpu_type, atom.position_per_atom,
-    atom.cpu_position_per_atom, atom.velocity_per_atom, atom.cpu_velocity_per_atom,
-    atom.force_per_atom, atom.virial_per_atom, thermo);
+  dump_exyz.process(step, global_time, box, atom, thermo);
+  dump_beads.process(step, global_time, box, atom);
   dump_observer.process(
     step, global_time, number_of_atoms_fixed, group, box, atom, force, integrate, thermo);
+  dump_dipole.process(step, global_time, number_of_atoms_fixed, group, box, atom, force);
+  dump_polarizability.process(step, global_time, number_of_atoms_fixed, group, box, atom, force);
   active.process(step, global_time, number_of_atoms_fixed, group, box, atom, force, thermo);
 
   compute.process(
-    step, integrate.ensemble->energy_transferred, group, atom.mass, atom.potential_per_atom,
-    atom.force_per_atom, atom.velocity_per_atom, atom.virial_per_atom);
+    step,
+    integrate.ensemble->energy_transferred,
+    group,
+    atom.mass,
+    atom.potential_per_atom,
+    atom.force_per_atom,
+    atom.velocity_per_atom,
+    atom.virial_per_atom);
   dos.process(step, group, atom.velocity_per_atom);
   sdc.process(step, group, atom.velocity_per_atom);
   msd.process(step, group, atom.unwrapped_position);
+  rdf.process(integrate.type >= 31, number_of_steps, step, box, atom);
   hac.process(
     number_of_steps, step, atom.velocity_per_atom, atom.virial_per_atom, atom.heat_per_atom);
   viscosity.process(number_of_steps, step, atom.mass, atom.velocity_per_atom, atom.virial_per_atom);
   shc.process(step, group, atom.velocity_per_atom, atom.virial_per_atom);
   hnemd.process(
-    step, temperature, box.get_volume(), atom.velocity_per_atom, atom.virial_per_atom,
+    step,
+    temperature,
+    box.get_volume(),
+    atom.velocity_per_atom,
+    atom.virial_per_atom,
     atom.heat_per_atom);
   hnemdec.process(
-    step, temperature, box.get_volume(), atom.velocity_per_atom, atom.virial_per_atom, atom.type,
-    atom.mass, atom.potential_per_atom, atom.heat_per_atom);
+    step,
+    temperature,
+    box.get_volume(),
+    atom.velocity_per_atom,
+    atom.virial_per_atom,
+    atom.type,
+    atom.mass,
+    atom.potential_per_atom,
+    atom.heat_per_atom);
   modal_analysis.process(
     step, temperature, box.get_volume(), hnemd.fe, atom.velocity_per_atom, atom.virial_per_atom);
+
+  lsqt.process(atom, box, step);
+  dump_shock_nemd.process(atom, box, step);
+
 #ifdef USE_NETCDF
   dump_netcdf.process(
-    step, global_time, box, atom.cpu_type, atom.position_per_atom, atom.cpu_position_per_atom);
+    step,
+    global_time,
+    box,
+    atom.cpu_type,
+    atom.position_per_atom,
+    atom.cpu_position_per_atom,
+    atom.velocity_per_atom,
+    atom.cpu_velocity_per_atom);
 #endif
 }
 
@@ -212,7 +280,9 @@ void Measure::parse_compute_gkma(const char** param, int num_param, const int nu
     "    sample_interval is %d.\n"
     "    first_mode is %d.\n"
     "    last_mode is %d.\n",
-    g->sample_interval, g->first_mode, g->last_mode);
+    g->sample_interval,
+    g->first_mode,
+    g->last_mode);
 
   if (g->f_flag) {
     if (g->f_bin_size <= 0.0) {
@@ -255,7 +325,8 @@ void Measure::parse_compute_gkma(const char** param, int num_param, const int nu
     printf(
       "    Use select atom range.\n"
       "    Atom types %d to %d.\n",
-      modal_analysis.atom_begin, modal_analysis.atom_end);
+      modal_analysis.atom_begin,
+      modal_analysis.atom_end);
   } else // default behavior
   {
     modal_analysis.atom_begin = 0;
@@ -347,7 +418,10 @@ void Measure::parse_compute_hnema(const char** param, int num_param, const int n
     "    output_interval is %d.\n"
     "    first_mode is %d.\n"
     "    last_mode is %d.\n",
-    h->sample_interval, h->output_interval, h->first_mode, h->last_mode);
+    h->sample_interval,
+    h->output_interval,
+    h->first_mode,
+    h->last_mode);
 
   if (h->f_flag) {
     if (h->f_bin_size <= 0.0) {
@@ -390,7 +464,8 @@ void Measure::parse_compute_hnema(const char** param, int num_param, const int n
     printf(
       "    Use select atom range.\n"
       "    Atom types %d to %d.\n",
-      modal_analysis.atom_begin, modal_analysis.atom_end);
+      modal_analysis.atom_begin,
+      modal_analysis.atom_end);
   } else // default behavior
   {
     modal_analysis.atom_begin = 0;

@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,8 +22,10 @@ Dump position data to movie.xyz.
 #include "model/group.cuh"
 #include "parse_utilities.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/gpu_vector.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 
 void Dump_Position::parse(const char** param, int num_param, const std::vector<Group>& groups)
 {
@@ -92,20 +94,19 @@ __global__ void copy_position(
 
 void Dump_Position::output_line2(const Box& box, const std::vector<std::string>& cpu_atom_symbol)
 {
-  if (box.triclinic == 0) {
-    fprintf(
-      fid_,
-      "Lattice=\"%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e\" "
-      "Properties=species:S:1:pos:R:3\n",
-      box.cpu_h[0], 0.0, 0.0, 0.0, box.cpu_h[1], 0.0, 0.0, 0.0, box.cpu_h[2]);
-  } else {
-    fprintf(
-      fid_,
-      "Lattice=\"%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e\" "
-      "Properties=species:S:1:pos:R:3\n",
-      box.cpu_h[0], box.cpu_h[3], box.cpu_h[6], box.cpu_h[1], box.cpu_h[4], box.cpu_h[7],
-      box.cpu_h[2], box.cpu_h[5], box.cpu_h[8]);
-  }
+  fprintf(
+    fid_,
+    "Lattice=\"%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e%15.7e\" "
+    "Properties=species:S:1:pos:R:3\n",
+    box.cpu_h[0],
+    box.cpu_h[3],
+    box.cpu_h[6],
+    box.cpu_h[1],
+    box.cpu_h[4],
+    box.cpu_h[7],
+    box.cpu_h[2],
+    box.cpu_h[5],
+    box.cpu_h[8]);
 }
 
 void Dump_Position::process(
@@ -130,30 +131,41 @@ void Dump_Position::process(
     output_line2(box, cpu_atom_symbol);
     for (int n = 0; n < num_atoms_total; n++) {
       fprintf(
-        fid_, precision_str_, cpu_atom_symbol[n].c_str(), cpu_position_per_atom[n],
-        cpu_position_per_atom[n + num_atoms_total], cpu_position_per_atom[n + 2 * num_atoms_total]);
+        fid_,
+        precision_str_,
+        cpu_atom_symbol[n].c_str(),
+        cpu_position_per_atom[n],
+        cpu_position_per_atom[n + num_atoms_total],
+        cpu_position_per_atom[n + 2 * num_atoms_total]);
     }
   } else {
     const int group_size = groups[grouping_method_].cpu_size[group_id_];
     const int group_size_sum = groups[grouping_method_].cpu_size_sum[group_id_];
     GPU_Vector<double> gpu_position_tmp(group_size * 3);
     copy_position<<<(group_size - 1) / 128 + 1, 128>>>(
-      group_size, group_size_sum, groups[grouping_method_].contents.data(),
-      position_per_atom.data(), position_per_atom.data() + num_atoms_total,
-      position_per_atom.data() + 2 * num_atoms_total, gpu_position_tmp.data(),
-      gpu_position_tmp.data() + group_size, gpu_position_tmp.data() + group_size * 2);
+      group_size,
+      group_size_sum,
+      groups[grouping_method_].contents.data(),
+      position_per_atom.data(),
+      position_per_atom.data() + num_atoms_total,
+      position_per_atom.data() + 2 * num_atoms_total,
+      gpu_position_tmp.data(),
+      gpu_position_tmp.data() + group_size,
+      gpu_position_tmp.data() + group_size * 2);
     for (int d = 0; d < 3; ++d) {
       double* cpu_data = cpu_position_per_atom.data() + num_atoms_total * d;
       double* gpu_data = gpu_position_tmp.data() + group_size * d;
-      CHECK(cudaMemcpy(cpu_data, gpu_data, sizeof(double) * group_size, cudaMemcpyDeviceToHost));
+      CHECK(gpuMemcpy(cpu_data, gpu_data, sizeof(double) * group_size, gpuMemcpyDeviceToHost));
     }
     fprintf(fid_, "%d\n", group_size);
     output_line2(box, cpu_atom_symbol);
     for (int n = 0; n < group_size; n++) {
       fprintf(
-        fid_, precision_str_,
+        fid_,
+        precision_str_,
         cpu_atom_symbol[groups[grouping_method_].cpu_contents[group_size_sum + n]].c_str(),
-        cpu_position_per_atom[n], cpu_position_per_atom[n + num_atoms_total],
+        cpu_position_per_atom[n],
+        cpu_position_per_atom[n + num_atoms_total],
         cpu_position_per_atom[n + 2 * num_atoms_total]);
     }
   }

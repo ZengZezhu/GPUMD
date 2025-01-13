@@ -12,11 +12,12 @@ src/nep*
 .vscode
 *~
 local
-public*
+public
+public.*
 \#*
 
 /nep
-/gpumd
+/gpumd*
 
 __pycache__/
 */__pycache__/

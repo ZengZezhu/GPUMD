@@ -7,7 +7,7 @@ Output files
 The ``nep`` executable produces several output files.
 The :ref:`loss.out file <loss_out>` is written in "append mode", while all other files are continuously overwritten.
 
-The content of the :ref:`energy_train.out <energy_out>`, :ref:`force_train.out <force_out>`, and :ref:`virial_train.out <virial_out>` files are updated every 1000 steps, while the content of the other output files are updated every 100 steps.
+The contents of the :ref:`energy_train.out <energy_out>`, :ref:`force_train.out <force_out_nep>`, :ref:`virial_train.out <virial_out>`, :ref:`stress_train.out <stress_out>`, :ref:`dipole_train.out <nep_dipole_out>`, and :ref:`polarizability_train.out <nep_polarizability_out>` files are updated every 1000 steps, while the contents of the other output files are updated every 100 steps.
 
 With the exception of the :ref:`nep.txt file <nep_txt>`, the output files contain only numbers (no text) in matrix form.
 All the files are plain text files.
@@ -29,14 +29,28 @@ All the files are plain text files.
      - target and predicted energies for training data set
    * - :ref:`energy_test.out <energy_out>`
      - target and predicted energies for test data set
-   * - :ref:`force_train.out <force_out>`
+   * - :ref:`force_train.out <force_out_nep>`
      - target and predicted forces for training data set
-   * - :ref:`force_test.out <force_out>`
+   * - :ref:`force_test.out <force_out_nep>`
      - target and predicted forces for test data set
    * - :ref:`virial_train.out <virial_out>`
      - target and predicted virials for training data set
    * - :ref:`virial_test.out <virial_out>`
      - target and predicted virials for test data set
+   * - :ref:`stress_train.out <stress_out>`
+     - target and predicted stress values for training data set
+   * - :ref:`stress_test.out <stress_out>`
+     - target and predicted stress values for test data set
+   * - :ref:`dipole_train.out <nep_dipole_out>`
+     - target and predicted dipole values for training data set
+   * - :ref:`dipole_test.out <nep_dipole_out>`
+     - target and predicted dipole values for test data set
+   * - :ref:`polarizability_train.out <nep_polarizability_out>`
+     - target and predicted polarizability values for training data set
+   * - :ref:`polarizability_test.out <nep_polarizability_out>`
+     - target and predicted polarizability values for test data set
+   * - :ref:`descriptor.out <descriptor_out>`
+     - descriptor values for training data set in prediction mode
 
 .. toctree::
    :maxdepth: 0
@@ -48,3 +62,7 @@ All the files are plain text files.
    energy_out
    force_out
    virial_out
+   stress_out
+   dipole_out
+   polarizability_out
+   descriptor_out

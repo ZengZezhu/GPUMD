@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,7 +24,9 @@ Calculate:
 #include "parse_utilities.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 
 namespace
 {
@@ -163,27 +165,45 @@ void MSD::process(const int step, const std::vector<Group>& groups, const GPU_Ve
   // copy the position data at the current step to appropriate place
   if (grouping_method_ < 0) {
     gpu_copy_position<<<(num_atoms_ - 1) / 128 + 1, 128>>>(
-      num_atoms_, xyz.data(), xyz.data() + number_of_atoms_total,
-      xyz.data() + 2 * number_of_atoms_total, x_.data() + step_offset, y_.data() + step_offset,
+      num_atoms_,
+      xyz.data(),
+      xyz.data() + number_of_atoms_total,
+      xyz.data() + 2 * number_of_atoms_total,
+      x_.data() + step_offset,
+      y_.data() + step_offset,
       z_.data() + step_offset);
   } else {
     const int group_offset = groups[grouping_method_].cpu_size_sum[group_id_];
     gpu_copy_position<<<(num_atoms_ - 1) / 128 + 1, 128>>>(
-      num_atoms_, group_offset, groups[grouping_method_].contents.data(), xyz.data(),
-      xyz.data() + number_of_atoms_total, xyz.data() + 2 * number_of_atoms_total,
-      x_.data() + step_offset, y_.data() + step_offset, z_.data() + step_offset);
+      num_atoms_,
+      group_offset,
+      groups[grouping_method_].contents.data(),
+      xyz.data(),
+      xyz.data() + number_of_atoms_total,
+      xyz.data() + 2 * number_of_atoms_total,
+      x_.data() + step_offset,
+      y_.data() + step_offset,
+      z_.data() + step_offset);
   }
-  CUDA_CHECK_KERNEL
+  GPU_CHECK_KERNEL
 
   // start to calculate the MSD when we have enough frames
   if (sample_step >= num_correlation_steps_ - 1) {
     ++num_time_origins_;
 
     gpu_find_msd<<<num_correlation_steps_, 128>>>(
-      num_atoms_, correlation_step, x_.data() + step_offset, y_.data() + step_offset,
-      z_.data() + step_offset, x_.data(), y_.data(), z_.data(), msdx_.data(), msdy_.data(),
+      num_atoms_,
+      correlation_step,
+      x_.data() + step_offset,
+      y_.data() + step_offset,
+      z_.data() + step_offset,
+      x_.data(),
+      y_.data(),
+      z_.data(),
+      msdx_.data(),
+      msdy_.data(),
       msdz_.data());
-    CUDA_CHECK_KERNEL
+    GPU_CHECK_KERNEL
   }
 }
 
@@ -192,7 +212,7 @@ void MSD::postprocess()
   if (!compute_)
     return;
 
-  CHECK(cudaDeviceSynchronize()); // needed for pre-Pascal GPU
+  CHECK(gpuDeviceSynchronize()); // needed for pre-Pascal GPU
 
   // normalize by the number of atoms and number of time origins
   const double msd_scaler = 1.0 / ((double)num_atoms_ * (double)num_time_origins_);
@@ -217,8 +237,14 @@ void MSD::postprocess()
   FILE* fid = fopen("msd.out", "a");
   for (int nc = 0; nc < num_correlation_steps_; nc++) {
     fprintf(
-      fid, "%g %g %g %g %g %g %g\n", nc * dt_in_ps_, msdx_[nc], msdy_[nc], msdz_[nc],
-      sdc_x[nc] * sdc_unit_conversion, sdc_y[nc] * sdc_unit_conversion,
+      fid,
+      "%g %g %g %g %g %g %g\n",
+      nc * dt_in_ps_,
+      msdx_[nc],
+      msdy_[nc],
+      msdz_[nc],
+      sdc_x[nc] * sdc_unit_conversion,
+      sdc_y[nc] * sdc_unit_conversion,
       sdc_z[nc] * sdc_unit_conversion);
   }
   fflush(fid);

@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@ class Group;
 class SHC
 {
 public:
+  int group_num;         // number of groups
   int compute = 0;       // 0 = not computing shc; 1 = computing shc
   int group_method = -1; // -1 means not using a group method
   int group_id = 0;      // calculating SHC for atoms in group id

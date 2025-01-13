@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,11 +18,14 @@ Dump some data to dump.xyz in the extended XYZ format
 --------------------------------------------------------------------------------------------------*/
 
 #include "dump_exyz.cuh"
+#include "model/atom.cuh"
 #include "model/box.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
+#include "utilities/gpu_macro.cuh"
 #include "utilities/gpu_vector.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 
 static __global__ void gpu_sum(const int N, const double* g_data, double* g_data_sum)
 {
@@ -52,8 +55,8 @@ void Dump_EXYZ::parse(const char** param, int num_param)
   dump_ = true;
   printf("Dump extended XYZ.\n");
 
-  if (num_param != 4) {
-    PRINT_INPUT_ERROR("dump_exyz should have 3 parameters.\n");
+  if (num_param < 2) {
+    PRINT_INPUT_ERROR("dump_exyz should have at least 1 parameter.\n");
   }
 
   if (!is_valid_int(param[1], &dump_interval_)) {
@@ -65,33 +68,70 @@ void Dump_EXYZ::parse(const char** param, int num_param)
 
   printf("    every %d steps.\n", dump_interval_);
 
-  if (!is_valid_int(param[2], &has_velocity_)) {
-    PRINT_INPUT_ERROR("has_velocity should be an integer.");
-  }
-  if (has_velocity_ == 0) {
-    printf("    without velocity data.\n");
-  } else {
-    printf("    with velocity data.\n");
+  has_velocity_ = 0;
+  has_force_ = 0;
+  has_potential_ = 0;
+  separated_ = 0;
+
+  if (num_param >= 3) {
+    if (!is_valid_int(param[2], &has_velocity_)) {
+      PRINT_INPUT_ERROR("has_velocity should be an integer.");
+    }
+    if (has_velocity_ == 0) {
+      printf("    without velocity data.\n");
+    } else {
+      printf("    with velocity data.\n");
+    }
   }
 
-  if (!is_valid_int(param[3], &has_force_)) {
-    PRINT_INPUT_ERROR("has_force should be an integer.");
+  if (num_param >= 4) {
+    if (!is_valid_int(param[3], &has_force_)) {
+      PRINT_INPUT_ERROR("has_force should be an integer.");
+    }
+    if (has_force_ == 0) {
+      printf("    without force data.\n");
+    } else {
+      printf("    with force data.\n");
+    }
   }
-  if (has_force_ == 0) {
-    printf("    without force data.\n");
-  } else {
-    printf("    with force data.\n");
+
+  if (num_param >= 5) {
+    if (!is_valid_int(param[4], &has_potential_)) {
+      PRINT_INPUT_ERROR("has_potential should be an integer.");
+    }
+    if (has_potential_ == 0) {
+      printf("    without potential data.\n");
+    } else {
+      printf("    with potential data.\n");
+    }
+  }
+
+  if (num_param >= 6) {
+    if (!is_valid_int(param[5], &separated_)) {
+      PRINT_INPUT_ERROR("separated should be an integer.");
+    }
+    if (separated_ == 0) {
+      printf("    dump_exyz into dump.xyz.\n");
+    } else {
+      printf("    dump_exyz into separated dump.*.xyz.\n");
+    }
   }
 }
 
 void Dump_EXYZ::preprocess(const int number_of_atoms)
 {
   if (dump_) {
-    fid_ = my_fopen("dump.xyz", "a");
+    if (separated_ == 0) {
+      fid_ = my_fopen("dump.xyz", "a");
+    }
+
     gpu_total_virial_.resize(6);
     cpu_total_virial_.resize(6);
     if (has_force_) {
       cpu_force_per_atom_.resize(number_of_atoms * 3);
+    }
+    if (has_potential_) {
+      cpu_potential_per_atom_.resize(number_of_atoms);
     }
   }
 }
@@ -111,16 +151,18 @@ void Dump_EXYZ::output_line2(
     fid_, " pbc=\"%c %c %c\"", box.pbc_x ? 'T' : 'F', box.pbc_y ? 'T' : 'F', box.pbc_z ? 'T' : 'F');
 
   // box
-  if (box.triclinic == 0) {
-    fprintf(
-      fid_, " Lattice=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"", box.cpu_h[0], 0.0, 0.0,
-      0.0, box.cpu_h[1], 0.0, 0.0, 0.0, box.cpu_h[2]);
-  } else {
-    fprintf(
-      fid_, " Lattice=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"", box.cpu_h[0], box.cpu_h[3],
-      box.cpu_h[6], box.cpu_h[1], box.cpu_h[4], box.cpu_h[7], box.cpu_h[2], box.cpu_h[5],
-      box.cpu_h[8]);
-  }
+  fprintf(
+    fid_,
+    " Lattice=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"",
+    box.cpu_h[0],
+    box.cpu_h[3],
+    box.cpu_h[6],
+    box.cpu_h[1],
+    box.cpu_h[4],
+    box.cpu_h[7],
+    box.cpu_h[2],
+    box.cpu_h[5],
+    box.cpu_h[8]);
 
   // energy and virial (symmetric tensor) in eV, and stress (symmetric tensor) in eV/A^3
   double cpu_thermo[8];
@@ -131,12 +173,28 @@ void Dump_EXYZ::output_line2(
 
   fprintf(fid_, " energy=%.8f", cpu_thermo[1]);
   fprintf(
-    fid_, " virial=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"", cpu_total_virial_[0],
-    cpu_total_virial_[3], cpu_total_virial_[4], cpu_total_virial_[3], cpu_total_virial_[1],
-    cpu_total_virial_[5], cpu_total_virial_[4], cpu_total_virial_[5], cpu_total_virial_[2]);
+    fid_,
+    " virial=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"",
+    cpu_total_virial_[0],
+    cpu_total_virial_[3],
+    cpu_total_virial_[4],
+    cpu_total_virial_[3],
+    cpu_total_virial_[1],
+    cpu_total_virial_[5],
+    cpu_total_virial_[4],
+    cpu_total_virial_[5],
+    cpu_total_virial_[2]);
   fprintf(
-    fid_, " stress=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"", cpu_thermo[2], cpu_thermo[5],
-    cpu_thermo[6], cpu_thermo[5], cpu_thermo[3], cpu_thermo[7], cpu_thermo[6], cpu_thermo[7],
+    fid_,
+    " stress=\"%.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\"",
+    cpu_thermo[2],
+    cpu_thermo[5],
+    cpu_thermo[6],
+    cpu_thermo[5],
+    cpu_thermo[3],
+    cpu_thermo[7],
+    cpu_thermo[6],
+    cpu_thermo[7],
     cpu_thermo[4]);
 
   // Properties
@@ -148,6 +206,9 @@ void Dump_EXYZ::output_line2(
   if (has_force_) {
     fprintf(fid_, ":forces:R:3");
   }
+  if (has_potential_) {
+    fprintf(fid_, ":energy_atom:R:1");
+  }
 
   // Over
   fprintf(fid_, "\n");
@@ -157,14 +218,7 @@ void Dump_EXYZ::process(
   const int step,
   const double global_time,
   const Box& box,
-  const std::vector<std::string>& cpu_atom_symbol,
-  const std::vector<int>& cpu_type,
-  GPU_Vector<double>& position_per_atom,
-  std::vector<double>& cpu_position_per_atom,
-  GPU_Vector<double>& velocity_per_atom,
-  std::vector<double>& cpu_velocity_per_atom,
-  GPU_Vector<double>& force_per_atom,
-  GPU_Vector<double>& virial_per_atom,
+  Atom& atom,
   GPU_Vector<double>& gpu_thermo)
 {
   if (!dump_)
@@ -172,32 +226,40 @@ void Dump_EXYZ::process(
   if ((step + 1) % dump_interval_ != 0)
     return;
 
-  const int num_atoms_total = position_per_atom.size() / 3;
-  position_per_atom.copy_to_host(cpu_position_per_atom.data());
+  const int num_atoms_total = atom.position_per_atom.size() / 3;
+  atom.position_per_atom.copy_to_host(atom.cpu_position_per_atom.data());
   if (has_velocity_) {
-    velocity_per_atom.copy_to_host(cpu_velocity_per_atom.data());
+    atom.velocity_per_atom.copy_to_host(atom.cpu_velocity_per_atom.data());
   }
   if (has_force_) {
-    force_per_atom.copy_to_host(cpu_force_per_atom_.data());
+    atom.force_per_atom.copy_to_host(cpu_force_per_atom_.data());
+  }
+  if (has_potential_) {
+    atom.potential_per_atom.copy_to_host(cpu_potential_per_atom_.data());
+  }
+
+  if (separated_) {
+    std::string filename = "dump." + std::to_string(step + 1) + ".xyz";
+    fid_ = my_fopen(filename.data(), "w");
   }
 
   // line 1
   fprintf(fid_, "%d\n", num_atoms_total);
 
   // line 2
-  output_line2(global_time, box, cpu_atom_symbol, virial_per_atom, gpu_thermo);
+  output_line2(global_time, box, atom.cpu_atom_symbol, atom.virial_per_atom, gpu_thermo);
 
   // other lines
   for (int n = 0; n < num_atoms_total; n++) {
-    fprintf(fid_, "%s", cpu_atom_symbol[n].c_str());
+    fprintf(fid_, "%s", atom.cpu_atom_symbol[n].c_str());
     for (int d = 0; d < 3; ++d) {
-      fprintf(fid_, " %.8f", cpu_position_per_atom[n + num_atoms_total * d]);
+      fprintf(fid_, " %.8f", atom.cpu_position_per_atom[n + num_atoms_total * d]);
     }
     if (has_velocity_) {
       const double natural_to_A_per_fs = 1.0 / TIME_UNIT_CONVERSION;
       for (int d = 0; d < 3; ++d) {
         fprintf(
-          fid_, " %.8f", cpu_velocity_per_atom[n + num_atoms_total * d] * natural_to_A_per_fs);
+          fid_, " %.8f", atom.cpu_velocity_per_atom[n + num_atoms_total * d] * natural_to_A_per_fs);
       }
     }
     if (has_force_) {
@@ -205,16 +267,24 @@ void Dump_EXYZ::process(
         fprintf(fid_, " %.8f", cpu_force_per_atom_[n + num_atoms_total * d]);
       }
     }
+    if (has_potential_) {
+      fprintf(fid_, " %.8f", cpu_potential_per_atom_[n]);
+    }
     fprintf(fid_, "\n");
   }
-
-  fflush(fid_);
+  if (separated_ == 0) {
+    fflush(fid_);
+  } else {
+    fclose(fid_);
+  }
 }
 
 void Dump_EXYZ::postprocess()
 {
   if (dump_) {
-    fclose(fid_);
+    if (separated_ == 0) {
+      fclose(fid_);
+    }
     dump_ = false;
   }
 }

@@ -1,7 +1,8 @@
 ###########################################################
 # Note: 
 # 1) You can modify -arch=sm_60 according to 
-#    your GPU architecture.
+#    your GPU architecture. For compute capability < 6.0,
+#    need to add -DUSE_KEPLER to CFLAGS.
 # 2) For Windows systems, if you get errors like 
 #    c1xx : fatal error C1083: Cannot open source file: ...
 #    You can consider removing -Xcompiler "/wd 4819"
@@ -16,10 +17,11 @@
 # some flags
 ###########################################################
 CC = nvcc
+CUDA_ARCH=-arch=sm_60
 ifdef OS # For Windows with the cl.exe compiler
-CFLAGS = -O3 -arch=sm_60 -Xcompiler "/wd 4819"
+CFLAGS = -O3 $(CUDA_ARCH)
 else # For linux
-CFLAGS = -std=c++14 -O3 -arch=sm_60
+CFLAGS = -std=c++14 -O3 $(CUDA_ARCH)
 endif
 INC = -I./
 LDFLAGS = 
@@ -32,8 +34,9 @@ LIBS = -lcublas -lcusolver
 SOURCES_GPUMD =                   \
 	$(wildcard main_gpumd/*.cu)   \
 	$(wildcard minimize/*.cu)     \
-	$(wildcard phonon/*.cu)  \
+	$(wildcard phonon/*.cu)       \
 	$(wildcard integrate/*.cu)    \
+	$(wildcard mc/*.cu)           \
 	$(wildcard force/*.cu)        \
 	$(wildcard measure/*.cu)      \
 	$(wildcard model/*.cu)        \
@@ -62,11 +65,12 @@ HEADERS =                         \
 	$(wildcard utilities/*.cuh)   \
 	$(wildcard main_gpumd/*.cuh)  \
 	$(wildcard integrate/*.cuh)   \
+	$(wildcard mc/*.cuh)          \
 	$(wildcard minimize/*.cuh)    \
 	$(wildcard force/*.cuh)       \
 	$(wildcard measure/*.cuh)     \
 	$(wildcard model/*.cuh)       \
-	$(wildcard phonon/*.cuh) \
+	$(wildcard phonon/*.cuh)      \
 	$(wildcard main_nep/*.cuh)
 
 
@@ -76,8 +80,14 @@ HEADERS =                         \
 all: gpumd nep
 gpumd: $(OBJ_GPUMD)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
+	@echo =================================================
+	@echo The gpumd executable is successfully compiled!
+	@echo =================================================
 nep: $(OBJ_NEP)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
+	@echo =================================================
+	@echo The nep executable is successfully compiled!
+	@echo =================================================
 
 
 ###########################################################
@@ -85,6 +95,8 @@ nep: $(OBJ_NEP)
 ###########################################################
 ifdef OS # for Windows
 integrate/%.obj: integrate/%.cu $(HEADERS)
+	$(CC) $(CFLAGS) $(INC) -c $< -o $@
+mc/%.obj: mc/%.cu $(HEADERS)
 	$(CC) $(CFLAGS) $(INC) -c $< -o $@
 minimize/%.obj: minimize/%.cu $(HEADERS)
 	$(CC) $(CFLAGS) $(INC) -c $< -o $@
@@ -104,6 +116,8 @@ main_nep/%.obj: main_nep/%.cu $(HEADERS)
 	$(CC) $(CFLAGS) $(INC) -c $< -o $@
 else # for Linux
 integrate/%.o: integrate/%.cu $(HEADERS)
+	$(CC) $(CFLAGS) $(INC) -c $< -o $@
+mc/%.o: mc/%.cu $(HEADERS)
 	$(CC) $(CFLAGS) $(INC) -c $< -o $@
 minimize/%.o: minimize/%.cu $(HEADERS)
 	$(CC) $(CFLAGS) $(INC) -c $< -o $@

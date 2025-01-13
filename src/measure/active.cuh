@@ -1,5 +1,5 @@
 /*
-    Copyright 2017 Zheyong Fan, Ville Vierimaa, Mikko Ervasti, and Ari Harju
+    Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,8 +16,8 @@
 #pragma once
 
 #include "utilities/gpu_vector.cuh"
-#include <vector>
 #include <string>
+#include <vector>
 class Box;
 class Atom;
 class Group;
@@ -27,10 +27,7 @@ class Active
 {
 public:
   void parse(const char** param, int num_param);
-  void preprocess(
-      const int number_of_atoms, 
-      const int number_of_files, 
-      Force& force);
+  void preprocess(const int number_of_atoms, const int number_of_files, Force& force);
   void process(
     int step,
     const double global_time,
@@ -79,8 +76,5 @@ private:
     GPU_Vector<double>& virial_per_atom,
     GPU_Vector<double>& gpu_thermo,
     double uncertainty);
-  void write_uncertainty(
-    const int step,
-    const double global_time,
-    double uncertainty);
+  void write_uncertainty(const int step, const double global_time, double uncertainty);
 };

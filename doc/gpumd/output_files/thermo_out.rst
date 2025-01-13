@@ -11,12 +11,7 @@ The frequency of the output is controlled via the :ref:`dump_thermo keyword <kw_
 File format
 -----------
 
-If the simulation box is orthogonal, there are 12 columns in this output file, each containing the values of a quantity at increasing time points::
-  
-  column   1 2 3 4  5  6  7   8   9   10 11 12
-  quantity T K U Px Py Pz Pyz Pxz Pxy Lx Ly Lz
-
-If the simulation box is triclinic, there are 18 columns in this output file, each containing the values of a quantity at increasing time points::
+There are 18 columns in this output file, each containing the values of a quantity at increasing time points::
 
   column   1 2 3 4  5  6  7   8   9   10 11 12 13 14 15 16 17 18
   quantity T K U Px Py Pz Pyz Pxz Pxy ax ay az bx by bz cx cy cz
@@ -40,3 +35,8 @@ If the simulation box is triclinic, there are 18 columns in this output file, ea
      \boldsymbol{a} &= a_x \boldsymbol{e}_x + a_y \boldsymbol{e}_y + a_z \boldsymbol{e}_z \\
      \boldsymbol{b} &= b_x \boldsymbol{e}_x + b_y \boldsymbol{e}_y + b_z \boldsymbol{e}_z \\
      \boldsymbol{c} &= c_x \boldsymbol{e}_x + c_y \boldsymbol{e}_y + c_z \boldsymbol{e}_z
+
+Caveats
+-------
+
+* The data in this file are also valid for PIMD-related runs, but note that in this case the output temperature is just the target one. The energy and pressure contain the virial-estimator contributions. 

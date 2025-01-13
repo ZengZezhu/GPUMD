@@ -26,7 +26,7 @@ All the characters are case-insensitive.
 Here, the different values are separated by spaces and spaces after the left ``"`` and before the right ``"`` are allowed.
 For example, one can write ``keyword=" value_1 value_2 value_3 "``.
 
-Essentially any keyword is allowd, but we only read the following ones:
+Essentially any keyword is allowed, but we only read the following ones:
 
 * :attr:`lattice="ax ay az bx by bz cx cy cz"` is mandatory and gives the cell vectors:
 
@@ -38,7 +38,9 @@ Essentially any keyword is allowd, but we only read the following ones:
 
 * :attr:`energy=energy_value` such as :attr:`energy=-123.4` is mandatory and gives the target energy of the structure, which is :math:`-123.4` eV in this example.
 * :attr:`virial="vxx vxy vxz vyx vyy vyz vzx vzy vzz"` is optional and gives the :math:`3\times3` virial tensor of the structure in eV.
-* :attr:`stress="sxx sxy sxz syx syy syz szx szy szz"` is optional and gives the :math:`3\times3` stress tensor of the structure in GPa.
+  Positive and negative values represent compressed and stretched states, respectively.
+* :attr:`stress="sxx sxy sxz syx syy syz szx szy szz"` is optional and gives the :math:`3\times3` stress tensor of the structure in eV/Å\ :math:`^3`.
+  Positive and negative values represent stretched and compressed states, respectively.
   If both :attr:`virial` and :attr:`stress` are present the former is used.
 * :attr:`weight=relative_weight` is optional and gives the relative weight for the current structure in the total loss function.
 * :attr:`properties=property_name:data_type:number_of_columns` is mandatory but only read the following items:
@@ -46,6 +48,10 @@ Essentially any keyword is allowd, but we only read the following ones:
   * :attr:`species:S:1` chemical symbol in the periodic table (case-sensitive)
   * :attr:`pos:R:3` position vector
   * :attr:`force:R:3` or :attr:`forces:R:3` target force vector
+
+* If a dipole model is to be trained, energy, virial, stress, and force will be ignored and one should additionally provide :attr:`dipole="dx dy dz"`, which is the dipole vector of the structure. 
+
+* If a polarizability model is to be trained, energy, virial, stress, force, and dipole will be ignored and one should additionally provide :attr:`pol="pxx pxy pxz pyx pyy pyz pzx pzy pzz"`, which is the polarizability tensor of the structure.
 
 Starting from line 3
 ^^^^^^^^^^^^^^^^^^^^
@@ -56,8 +62,9 @@ Units
 -----
 * Length and position are expected in units of Ångstrom.
 * The energy is expected  in units of eV.
-* Forces are exepected is in units of eV/Å.
-* Virials are expected in units of eV (such that th virial divided by the volume yields the stress).
+* Forces are expected in units of eV/Å.
+* Virials are expected in units of eV (such that the virial divided by the volume yields the stress).
+* Dipole and polarizability can be in arbitrary units (such as the Hartree atomic units) as liked (and remembered) by the user.
 
 Tips
 ----
